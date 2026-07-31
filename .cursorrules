@@ -15,3 +15,14 @@
 - Always write clean, modular vanilla JavaScript.
 - Avoid using TypeScript types, interfaces, or generics.
 - Use JSDoc comments (`/** @param ... */`) if code clarification or basic IDE type hinting is required.
+
+## Authentication & Middleware Rules
+- Route protection must use the named middleware `auth.js` inside the Vue script setup.
+- To protect a page, always add: `definePageMeta({ middleware: 'auth' })` inside a pure JavaScript `<script setup>` tag.
+- Use the `useAuth()` composable to read or manipulate user authentication states.
+
+## Pinia State Management Rules
+- All global application state must be managed via Pinia stores located in the `/stores` directory.
+- Use the Setup Store syntax (`defineStore('id', () => { ... })`) using pure JavaScript.
+- Do NOT use TypeScript types or interfaces within stores.
+- Access store states in components using store variables directly or via `storeToRefs()` to maintain reactivity.
