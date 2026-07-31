@@ -1,0 +1,17 @@
+# JavaScript-Only Nuxt 3 Project Rules
+
+## Tech Stack & Language
+- Language: Strictly use Pure JavaScript (ES6+).
+- Framework: Nuxt 3 (Vue 3 Composition API).
+- Components: Always use `<script setup>` without the `lang="ts"` attribute.
+- Styling: Tailwind CSS (if installed).
+
+## File Extension Constraints
+- Absolutely NO TypeScript. Never generate `.ts` files.
+- All pages, components, and layouts must use standard `.vue` templates.
+- All composables, plugins, middleware, and server routes must use `.js`.
+
+## Code Generation Guidelines
+- Always write clean, modular vanilla JavaScript.
+- Avoid using TypeScript types, interfaces, or generics.
+- Use JSDoc comments (`/** @param ... */`) if code clarification or basic IDE type hinting is required.
