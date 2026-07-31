@@ -1,17 +1,17 @@
 <template>
   <div class="flex flex-1 items-center justify-center px-6 py-16">
-    <div class="w-full max-w-md text-center">
-      <h1 class="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+    <div class="panel w-full max-w-md px-6 py-10 text-center sm:px-8">
+      <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)] sm:text-4xl">
         Login
       </h1>
-      <p class="mt-3 text-[var(--color-ink)]/70">
+      <p class="mt-3 text-[var(--mute)]">
         Toggle authentication to access the protected dashboard.
       </p>
 
-      <p class="mt-8 text-sm font-medium">
+      <p class="mt-8 text-sm font-medium text-[var(--ink)]">
         Status:
         <span
-          :class="isAuthenticated ? 'text-[var(--color-sea)]' : 'text-[var(--color-ink)]/50'"
+          :class="isAuthenticated ? 'text-[var(--accent-ink)]' : 'text-[var(--mute-soft)]'"
         >
           {{ isAuthenticated ? 'Authenticated' : 'Signed out' }}
         </span>
@@ -19,24 +19,20 @@
 
       <button
         type="button"
-        class="mt-6 w-full rounded-md px-5 py-3 text-sm font-semibold text-white transition-colors sm:w-auto"
-        :class="
-          isAuthenticated
-            ? 'bg-[var(--color-ink)] hover:bg-[var(--color-ink)]/85'
-            : 'bg-[var(--color-sea)] hover:bg-[var(--color-sea-deep)]'
-        "
+        class="mt-6 w-full sm:w-auto"
+        :class="isAuthenticated ? 'btn-secondary' : 'btn-primary'"
         @click="toggleAuth"
       >
         {{ isAuthenticated ? 'Log out' : 'Log in' }}
       </button>
 
-      <p v-if="isAuthenticated" class="mt-6 text-sm text-[var(--color-ink)]/60">
+      <p v-if="isAuthenticated" class="mt-6 text-sm text-[var(--mute)]">
         You’re signed in
         <template v-if="user?.name">
-          as <span class="font-medium text-[var(--color-ink)]">{{ user.name }}</span>
+          as <span class="font-medium text-[var(--ink)]">{{ user.name }}</span>
         </template>
         —
-        <NuxtLink to="/dashboard" class="font-medium text-[var(--color-sea)] underline-offset-2 hover:underline">
+        <NuxtLink to="/dashboard" class="font-medium text-[var(--accent-ink)] underline-offset-2 hover:underline">
           go to dashboard
         </NuxtLink>
       </p>
@@ -49,8 +45,10 @@ definePageMeta({
   layout: 'plain',
 })
 
+const { appName } = useAppName()
+
 useHead({
-  title: 'Login — Northline',
+  title: 'Login',
 })
 
 const { isAuthenticated, user, login, logout } = useAuth()
@@ -64,9 +62,11 @@ const toggleAuth = () => {
     return
   }
 
+  const slug = appName.value.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'zorro'
+
   login({
     name: 'Demo User',
-    email: 'demo@northline.app',
+    email: `demo@${slug}.app`,
   })
 }
 </script>

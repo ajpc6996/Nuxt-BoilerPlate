@@ -1,18 +1,18 @@
 <template>
   <footer
     id="contact"
-    class="border-t border-[var(--color-ink)]/10 bg-[var(--color-ink)] text-[var(--color-mist)]"
+    class="border-t border-[var(--border)] bg-[var(--surface-raised)] text-[var(--ink)]"
   >
     <div
       class="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-12 md:flex-row md:items-end md:justify-between lg:px-8"
     >
       <div>
         <p class="font-display text-2xl font-semibold tracking-tight">
-          Northline
+          {{ appName }}
         </p>
-        <p class="mt-2 max-w-sm text-sm text-white/70">
-          A modular Nuxt JavaScript starter with Tailwind — ready to shape into
-          your next product.
+        <p class="mt-2 max-w-sm text-sm text-[var(--mute)]">
+          A modular Nuxt JavaScript starter with Tailwind and Dark Theme —
+          ready to shape into your next product.
         </p>
       </div>
 
@@ -22,13 +22,13 @@
             v-for="link in footerLinks"
             :key="link.to"
             :to="link.to"
-            class="text-white/75 transition-colors hover:text-white"
+            class="text-[var(--mute)] transition-colors hover:text-[var(--accent-ink)]"
           >
             {{ link.label }}
           </NuxtLink>
         </nav>
-        <p class="text-xs text-white/50">
-          © {{ currentYear }} Northline. All rights reserved.
+        <p class="text-xs text-[var(--mute-soft)]">
+          © {{ currentYear }} {{ appName }}. All rights reserved.
         </p>
       </div>
     </div>
@@ -36,6 +36,7 @@
 </template>
 
 <script setup>
+const { appName } = useAppName()
 const currentYear = new Date().getFullYear()
 
 const footerLinks = [

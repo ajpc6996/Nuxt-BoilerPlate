@@ -6,16 +6,16 @@
     >
       <NuxtLink
         to="/"
-        class="font-display text-xl font-semibold tracking-tight text-white transition-opacity hover:opacity-80"
+        class="font-display text-xl font-semibold tracking-tight text-[var(--ink)] transition-opacity hover:opacity-80"
       >
-        Northline
+        {{ appName }}
       </NuxtLink>
 
       <ul class="hidden items-center gap-8 md:flex">
         <li v-for="link in navLinks" :key="link.to">
           <NuxtLink
             :to="link.to"
-            class="text-sm font-medium text-white/85 transition-colors hover:text-white"
+            class="text-sm font-medium text-[var(--ink)]/85 transition-colors hover:text-[var(--accent-ink)]"
           >
             {{ link.label }}
           </NuxtLink>
@@ -25,7 +25,7 @@
       <div class="hidden md:block">
         <NuxtLink
           to="#get-started"
-          class="rounded-md bg-white px-4 py-2 text-sm font-semibold text-[var(--color-ink)] transition-colors hover:bg-[var(--color-sand)]"
+          class="btn-primary !px-4 !py-2"
         >
           Get started
         </NuxtLink>
@@ -33,7 +33,7 @@
 
       <button
         type="button"
-        class="inline-flex items-center justify-center rounded-md p-2 text-white md:hidden"
+        class="inline-flex items-center justify-center rounded-md p-2 text-[var(--ink)] md:hidden"
         :aria-expanded="mobileOpen"
         aria-controls="mobile-menu"
         @click="mobileOpen = !mobileOpen"
@@ -75,13 +75,13 @@
     <div
       v-show="mobileOpen"
       id="mobile-menu"
-      class="border-t border-white/10 bg-[var(--color-ink)]/95 px-6 py-4 backdrop-blur md:hidden"
+      class="border-t border-[var(--border)] bg-[var(--surface-raised)]/95 px-6 py-4 backdrop-blur md:hidden"
     >
       <ul class="flex flex-col gap-4">
         <li v-for="link in navLinks" :key="link.to">
           <NuxtLink
             :to="link.to"
-            class="block text-sm font-medium text-white/90"
+            class="block text-sm font-medium text-[var(--ink)]/90"
             @click="mobileOpen = false"
           >
             {{ link.label }}
@@ -90,7 +90,7 @@
         <li>
           <NuxtLink
             to="#get-started"
-            class="inline-flex rounded-md bg-white px-4 py-2 text-sm font-semibold text-[var(--color-ink)]"
+            class="btn-primary inline-flex !px-4 !py-2"
             @click="mobileOpen = false"
           >
             Get started
@@ -102,6 +102,7 @@
 </template>
 
 <script setup>
+const { appName } = useAppName()
 const mobileOpen = ref(false)
 
 const navLinks = [

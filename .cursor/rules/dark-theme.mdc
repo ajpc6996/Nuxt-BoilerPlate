@@ -1,0 +1,31 @@
+---
+description: Dark Theme (Sintrex Dark) is the default visual system for all UI work
+alwaysApply: true
+---
+
+# Dark Theme (Sintrex Dark)
+
+The default and only app theme is **Dark Theme**, based on Sintrex Dark from ServicesConnect.
+
+## Tokens (use these — do not invent new hex colors)
+
+- Text: `--ink`, `--mute`, `--mute-soft`
+- Surfaces: `--surface`, `--surface-raised`, `--surface-white`
+- Borders: `--border`, `--border-soft`
+- Accent: `--accent` (`#00c2c7`), `--accent-soft`, `--accent-ink`
+- Danger/warn: `--danger`
+- CTA on accent: `--btn-on-accent` (`#041416`)
+- Radii: `--radius`, `--radius-sm`
+- Fonts: `--font-body` (DM Sans), `--font-display` (Fraunces), `--font-mono` (IBM Plex Mono)
+
+Defined in `app/assets/css/main.css`. OpenVue preset: `app/themes/darkTheme.js`. Theme state: `useTheme()` (`data-theme="dark"`).
+
+## UI conventions
+
+- Prefer `var(--token)` / Tailwind arbitrary values (`bg-[var(--surface)]`, `text-[var(--mute)]`).
+- Primary actions: `.btn-primary` (cyan fill, near-black text). Secondary: `.btn-secondary`.
+- Panels/cards when needed for interaction: `.panel` or surface-white + border tokens.
+- OpenVue components inherit Dark Theme via the Nuxt `primevue.theme.preset`.
+- AG Grid defaults to `agGridDarkTheme` from `~/utils/agGridDarkTheme`.
+- Do **not** reintroduce light/mist Northline palette (`#e8f0f2`, `#1a6b6b`, sand, white cards) unless adding an explicit alternate theme.
+- Keep `html` / SSR default as `data-theme="dark"`.

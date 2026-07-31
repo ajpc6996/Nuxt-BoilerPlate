@@ -6,6 +6,19 @@
 - Components: Always use `<script setup>` without the `lang="ts"` attribute.
 - Styling: Tailwind CSS (if installed).
 
+## App branding
+- Brand / product name comes from `app/app.config.js` (`appName`, default `"Zorro"`).
+- Use `useAppName()` (or `useAppConfig().appName`) for visible brand text — do not hardcode product names in components.
+
+## Dark Theme (default)
+- The default visual system is **Dark Theme** (Sintrex Dark): charcoal surfaces + cyan accent `#00c2c7`.
+- Use CSS variables from `app/assets/css/main.css` (`--ink`, `--mute`, `--surface`, `--accent`, etc.).
+- Prefer shared classes `.btn-primary`, `.btn-secondary`, and `.panel` for common UI chrome.
+- OpenVue theming must use `DarkTheme` from `app/themes/darkTheme.js` (Aura preset override).
+- AG Grid should use `agGridDarkTheme` from `app/utils/agGridDarkTheme.js`.
+- Keep `data-theme="dark"` as the default; use `useTheme()` for theme application.
+- Do not introduce a light/default Northline mist palette unless explicitly adding a second theme.
+
 ## File Extension Constraints
 - Absolutely NO TypeScript. Never generate `.ts` files.
 - All pages, components, and layouts must use standard `.vue` templates.

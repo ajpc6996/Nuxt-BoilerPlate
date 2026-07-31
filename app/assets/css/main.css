@@ -2,32 +2,124 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-ink: #0f1c24;
-  --color-mist: #e8f0f2;
-  --color-sea: #1a6b6b;
-  --color-sea-deep: #0f4f4f;
-  --color-sand: #d4c4a8;
+/*
+ * Dark Theme (Sintrex Dark) — default
+ * Charcoal shell, cyan teal accents (#00c2c7)
+ */
+:root,
+html[data-theme='dark'] {
+  --ink: #e8eef4;
+  --mute: #9aa7b5;
+  --mute-soft: #7b8794;
+  --surface: #14171c;
+  --surface-raised: #1a1e25;
+  --surface-white: #1e232b;
+  --border: #2f3742;
+  --border-soft: #273039;
+  --accent: #00c2c7;
+  --accent-soft: rgba(0, 194, 199, 0.16);
+  --accent-ink: #7eeaee;
+  --ghost: #6b7785;
+  --danger: #f0a060;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --canvas-base: #171b21;
+  --canvas-end: #12161b;
+  --canvas-dot: rgba(0, 194, 199, 0.12);
+  --modal-scrim: rgba(0, 0, 0, 0.55);
+  --btn-on-accent: #041416;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --impact-critical: #dc2626;
+  --impact-major: #ea580c;
+  --impact-minor: #ca8a04;
+  --impact-none: #16a34a;
+
+  /* Semantic aliases used across the app */
+  --color-ink: var(--ink);
+  --color-mute: var(--mute);
+  --color-mute-soft: var(--mute-soft);
+  --color-mist: var(--surface);
+  --color-panel: var(--surface-white);
+  --color-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-sea: var(--accent);
+  --color-sea-deep: #00888b;
+  --color-sand: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
+  --color-ghost: var(--ghost);
+  --color-btn-on-accent: var(--btn-on-accent);
+
   --font-display: 'Fraunces', Georgia, serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 @layer base {
   html {
     scroll-behavior: smooth;
+    color-scheme: dark;
   }
 
   body {
     @apply antialiased;
     font-family: var(--font-body);
-    color: var(--color-ink);
-    background-color: var(--color-mist);
+    color: var(--ink);
+    background-color: var(--surface);
+    background-image:
+      radial-gradient(circle at 1px 1px, var(--canvas-dot) 1px, transparent 0),
+      linear-gradient(180deg, var(--canvas-base) 0%, var(--canvas-end) 100%);
+    background-size: 18px 18px, auto;
+    background-attachment: fixed;
+    min-height: 100%;
+  }
+
+  code {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply rounded-md px-5 py-3 text-sm font-semibold transition-colors;
+    background: var(--accent);
+    color: var(--btn-on-accent);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.08);
+  }
+
+  .btn-secondary {
+    @apply rounded-md border px-5 py-3 text-sm font-semibold transition-colors;
+    border-color: var(--border);
+    color: var(--ink);
+    background: transparent;
+  }
+
+  .btn-secondary:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .panel {
+    background: var(--surface-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
   }
 }
 
 @layer utilities {
   .font-display {
     font-family: var(--font-display);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
   }
 
   .animate-fade-up {
