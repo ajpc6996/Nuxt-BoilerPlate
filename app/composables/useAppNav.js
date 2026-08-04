@@ -14,8 +14,22 @@ export function useAppNav() {
 
   const { allowsRoles } = usePermissions()
 
+  /**
+   * Administration must stay last even if nav config order changes.
+   * @param {Array<{ id: string }>} list
+   */
+  function withAdministrationLast(list) {
+    const admin = []
+    const rest = []
+    for (const group of list) {
+      if (group.id === 'administration') admin.push(group)
+      else rest.push(group)
+    }
+    return [...rest, ...admin]
+  }
+
   const groups = computed(() => {
-    return appNavGroups
+    const visible = appNavGroups
       .map((group) => {
         if (!allowsRoles(group.roles)) return null
         const children = (group.children || []).filter((item) =>
@@ -25,13 +39,15 @@ export function useAppNav() {
         return { ...group, children }
       })
       .filter(Boolean)
+
+    return withAdministrationLast(visible)
   })
 
   const filteredGroups = computed(() => {
     const q = searchQuery.value.trim().toLowerCase()
     if (!q) return groups.value
 
-    return groups.value
+    const filtered = groups.value
       .map((group) => {
         const groupMatch = group.label.toLowerCase().includes(q)
         const children = (group.children || []).filter(
@@ -47,6 +63,8 @@ export function useAppNav() {
         }
       })
       .filter(Boolean)
+
+    return withAdministrationLast(filtered)
   })
 
   function initSidebar() {

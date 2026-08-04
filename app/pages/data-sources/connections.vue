@@ -194,7 +194,18 @@
             <SchemaFormFields
               v-model="form.config"
               :schema="selectedType.config_schema"
+              :omit-keys="lookupOmitKeys"
             />
+            <div
+              v-if="supportsLookup"
+              class="mt-4"
+            >
+              <ConnectionLookupConfig
+                v-model="form.config"
+                :path-template="String(form.config.path || '')"
+                :organization-id="activeOrganization?.id || ''"
+              />
+            </div>
           </div>
 
           <div v-if="selectedType && hasCredentialFields">
@@ -266,6 +277,17 @@ const selectedType = computed(() =>
 
 const hasCredentialFields = computed(() =>
   Boolean(Object.keys(selectedType.value?.credential_schema?.properties || {}).length),
+)
+
+const supportsLookup = computed(() =>
+  selectedType.value?.runner_key === 'rest_generic'
+  || Boolean(selectedType.value?.capabilities?.lookupExpansion),
+)
+
+const lookupOmitKeys = computed(() =>
+  supportsLookup.value
+    ? ['lookupEnabled', 'lookupTable', 'maxExpansions']
+    : [],
 )
 
 function statusClass(status) {

@@ -1,7 +1,12 @@
 <template>
   <div class="mx-auto w-full max-w-4xl flex-1 px-6 py-12 lg:px-8">
     <div class="flex flex-wrap items-end justify-between gap-4">
-      <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Organizations</h1>
+      <div>
+        <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Organizations</h1>
+        <p class="mt-2 text-sm text-[var(--mute)]">
+          Platform only. Creating an org adds you as an active member with the Admin role.
+        </p>
+      </div>
       <NuxtLink to="/platform" class="btn-secondary !px-4 !py-2">Back</NuxtLink>
     </div>
 
@@ -34,8 +39,8 @@
           <option value="required">required</option>
         </select>
       </div>
-      <button type="submit" class="btn-primary sm:col-span-3 !px-4 !py-2">
-        Create organization
+      <button type="submit" class="btn-primary sm:col-span-3 !px-4 !py-2" :disabled="busy">
+        {{ busy ? 'Creating…' : 'Create organization' }}
       </button>
     </form>
 
@@ -71,6 +76,13 @@
           >
             Set active
           </button>
+          <button
+            type="button"
+            class="btn-secondary !px-3 !py-1.5"
+            @click="goUsers(org)"
+          >
+            Users
+          </button>
         </div>
       </li>
     </ul>
@@ -86,7 +98,8 @@ definePageMeta({
 useHead({ title: 'Platform Organizations' })
 
 const supabase = useSupabase()
-const { user } = useAuth()
+const authedFetch = useAuthedFetch()
+const nuxtApp = useNuxtApp()
 const { setActiveOrganizationAsPlatform } = useOrganization()
 
 const orgs = ref([])
@@ -95,6 +108,7 @@ const slug = ref('')
 const mfaMode = ref('optional')
 const errorMessage = ref('')
 const notice = ref('')
+const busy = ref(false)
 
 const load = async () => {
   const { data, error } = await supabase
@@ -113,27 +127,34 @@ onMounted(load)
 const createOrg = async () => {
   errorMessage.value = ''
   notice.value = ''
-  const { data, error } = await supabase
-    .from('organizations')
-    .insert({
-      name: name.value.trim(),
-      slug: slug.value.trim().toLowerCase(),
-      mfa_mode: mfaMode.value,
-      created_by: user.value?.id,
+  busy.value = true
+  try {
+    const res = await authedFetch('/api/platform/organizations', {
+      method: 'POST',
+      body: {
+        name: name.value.trim(),
+        slug: slug.value.trim().toLowerCase(),
+        mfaMode: mfaMode.value,
+      },
     })
-    .select('id, name, slug, mfa_mode')
-    .single()
 
-  if (error) {
-    errorMessage.value = error.message
-    return
+    name.value = ''
+    slug.value = ''
+    mfaMode.value = 'optional'
+    notice.value = `Created ${res.item.name} — you are an Admin member`
+
+    if (typeof nuxtApp.$hydrateAuthState === 'function') {
+      await nuxtApp.$hydrateAuthState()
+    }
+    await setActiveOrganizationAsPlatform(res.item)
+    await load()
   }
-
-  name.value = ''
-  slug.value = ''
-  mfaMode.value = 'optional'
-  notice.value = `Created ${data.name}`
-  await load()
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Create failed'
+  }
+  finally {
+    busy.value = false
+  }
 }
 
 const updateMfa = async (id, mode) => {
@@ -152,5 +173,10 @@ const updateMfa = async (id, mode) => {
 const activate = async (org) => {
   await setActiveOrganizationAsPlatform(org)
   notice.value = `Active organization set to ${org.name}`
+}
+
+const goUsers = async (org) => {
+  await setActiveOrganizationAsPlatform(org)
+  await navigateTo('/administration/users')
 }
 </script>

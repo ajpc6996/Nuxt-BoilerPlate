@@ -22,8 +22,21 @@
         {{ field.description }}
       </p>
 
+      <label
+        v-if="field.type === 'boolean'"
+        class="flex items-center gap-2 text-sm text-[var(--ink)]"
+      >
+        <input
+          :id="`schema-${field.key}`"
+          type="checkbox"
+          :checked="Boolean(model[field.key])"
+          @change="setValue(field.key, $event.target.checked)"
+        >
+        Enable
+      </label>
+
       <select
-        v-if="field.enum?.length"
+        v-else-if="field.enum?.length"
         :id="`schema-${field.key}`"
         class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
         :value="model[field.key] ?? ''"
@@ -91,6 +104,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  omitKeys: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -100,28 +117,30 @@ const model = computed(() => props.modelValue || {})
 const fields = computed(() => {
   const properties = props.schema?.properties || {}
   const required = new Set(props.schema?.required || [])
-  return Object.entries(properties).map(([key, def]) => {
-    const title = def.title || key
-    const type = def.type || 'string'
-    const multiline = props.secret
-      ? false
-      : key.toLowerCase().includes('json')
-        || key.toLowerCase().includes('csv')
-        || key.toLowerCase().includes('inline')
-        || Boolean(def.multiline)
-    return {
-      key,
-      title,
-      description: def.description || '',
-      type,
-      enum: Array.isArray(def.enum) ? def.enum : null,
-      required: required.has(key),
-      multiline,
-      secret: props.secret,
-    }
-  })
+  const omit = new Set(props.omitKeys || [])
+  return Object.entries(properties)
+    .filter(([key]) => !omit.has(key))
+    .map(([key, def]) => {
+      const title = def.title || key
+      const type = def.type || 'string'
+      const multiline = props.secret
+        ? false
+        : key.toLowerCase().includes('json')
+          || key.toLowerCase().includes('csv')
+          || key.toLowerCase().includes('inline')
+          || Boolean(def.multiline)
+      return {
+        key,
+        title,
+        description: def.description || '',
+        type,
+        enum: Array.isArray(def.enum) ? def.enum : null,
+        required: required.has(key),
+        multiline,
+        secret: props.secret,
+      }
+    })
 })
-
 /**
  * @param {string} key
  * @param {unknown} value

@@ -8,7 +8,7 @@
         <p class="mt-2 text-[var(--mute)]">
           Manage users and roles for
           <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'the active organization' }}</span>.
-          MFA-verified session required.
+          MFA-verified session required. Organization creation is platform-only.
         </p>
       </div>
       <div class="flex gap-2">

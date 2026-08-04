@@ -68,6 +68,7 @@ export async function executeConnection(opts) {
       config: connection.config || {},
       secrets,
       mode,
+      organizationId: connection.organization_id,
     })
 
     const rows = Array.isArray(result.rows) ? result.rows : []

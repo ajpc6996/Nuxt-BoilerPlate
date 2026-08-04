@@ -158,6 +158,11 @@ const load = async () => {
   members.value = membersRes.data || []
   roles.value = rolesRes.data || []
   assignments.value = assignmentsRes.data || []
+
+  const loadErr = membersRes.error || rolesRes.error || assignmentsRes.error
+  if (loadErr) {
+    errorMessage.value = loadErr.message
+  }
 }
 
 watch(activeOrganizationId, load, { immediate: true })

@@ -9,13 +9,13 @@
       <NuxtLink to="/platform/organizations" class="panel p-6 hover:border-[var(--accent)]">
         <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Organizations</h2>
         <p class="mt-2 text-sm text-[var(--mute)]">
-          Create organizations and set MFA mode (off / optional / required).
+          Create organizations (you become Admin), set MFA mode, and activate an org.
         </p>
       </NuxtLink>
       <NuxtLink to="/administration/users" class="panel p-6 hover:border-[var(--accent)]">
-        <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Users in active org</h2>
+        <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Users & roles</h2>
         <p class="mt-2 text-sm text-[var(--mute)]">
-          Switch active org, then manage users, invites, and password resets.
+          For the active org: invite/create users, assign roles, manage membership status.
         </p>
       </NuxtLink>
     </div>

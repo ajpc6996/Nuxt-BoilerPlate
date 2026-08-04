@@ -26,7 +26,18 @@ Without these, reset emails open the app but Auth rejects the redirect / code ex
 
 When you trigger “Reset password” from the Supabase dashboard, it uses **Site URL**. Prefer requesting reset from the app login page so `redirectTo` is set to `/auth/reset-password`.
 
-## 3. Create / promote platform admin
+### Org & user management (UI)
+
+| Who | Where | Can do |
+|-----|--------|--------|
+| **Platform admin** | **Platform → Organizations** | Create orgs (you become Admin member), MFA mode, set active org |
+| **Platform or Org Admin** | **Administration → Users / Roles** | Invite/create users, assign roles, membership status, custom roles — **active org only** |
+
+Org admins **cannot** create organizations.
+
+Apply `20260804190000_org_admin_member_select.sql` so org admins can list other members in their org.
+
+### Create / promote platform admin
 
 Create your user (Authentication → Users, or sign in once), then in **SQL Editor**:
 
@@ -106,3 +117,8 @@ Seeded types: `json_file`, `csv_file`, `rest_generic`.
 **Ingest landing:** each connection’s `destination_table` becomes a real table
 `ingest.<destination_table>` (apply `20260804180000_physical_ingest_tables.sql`).
 In the Table Editor, switch the schema dropdown from `public` to **`ingest`**.
+
+**URL lookup expansion (REST):** apply `20260804200000_ingest_lookup_expansion.sql`.
+On a REST connection, enable **Expand URL from ingest table**, set a path like
+`/teams/{team_id}/players`, pick a prior ingest table, and map each `{var}` to a column.
+A run issues one request per distinct value set (capped; test mode uses up to 3) and unions rows into the destination.
