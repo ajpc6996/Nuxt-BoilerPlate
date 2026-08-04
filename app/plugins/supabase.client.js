@@ -72,7 +72,7 @@ export default defineNuxtPlugin({
         })
         authStore.setProfile(profile)
 
-        await loadMemberships(supabase, orgStore, session.user.id)
+        await loadMembershipsViaApi(supabase, orgStore, session)
       } catch (err) {
         // Aborted overlapping hydrations are expected; ignore them.
         if (err?.name === 'AbortError' || /aborted/i.test(err?.message || '')) {
@@ -113,68 +113,45 @@ export default defineNuxtPlugin({
 })
 
 /**
+ * Load orgs/roles through Nitro + service role (bypasses broken private.* RLS).
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {ReturnType<typeof useOrganizationStore>} orgStore
- * @param {string} userId
+ * @param {import('@supabase/supabase-js').Session} session
  */
-async function loadMemberships(supabase, orgStore, userId) {
+async function loadMembershipsViaApi(supabase, orgStore, session) {
   orgStore.loading = true
   try {
-    const { data, error } = await supabase
-      .from('organization_members')
-      .select('id, organization_id, status, organizations(id, name, slug, mfa_mode)')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .order('created_at', { ascending: true })
-
-    if (error) {
-      console.warn('[auth] Failed to load memberships', error.message)
-      orgStore.setMemberships([])
-      orgStore.setActiveOrganizationId(null)
-      orgStore.setRolesInActiveOrg([])
+    const token = session?.access_token
+    if (!token) {
+      orgStore.reset()
       return
     }
 
-    orgStore.setMemberships(data || [])
+    const res = await $fetch('/api/me/context', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    const memberships = res?.memberships || []
+    orgStore.setMemberships(memberships)
+    orgStore.setRolesByOrg(res?.rolesByOrg || {})
 
     const saved = orgStore.restoreActiveOrganizationId()
-    const validSaved = (data || []).some((m) => m.organization_id === saved)
+    const validSaved = memberships.some((m) => m.organization_id === saved)
     const nextOrgId = validSaved
       ? saved
-      : data?.[0]?.organization_id || null
+      : memberships[0]?.organization_id || null
 
     orgStore.setActiveOrganizationId(nextOrgId)
-    await loadRolesForActiveOrg(supabase, orgStore, userId)
-  } finally {
+    orgStore.applyRolesForOrg(nextOrgId)
+  }
+  catch (err) {
+    console.warn('[auth] Failed to load memberships via API', err?.data?.statusMessage || err?.message || err)
+    orgStore.setMemberships([])
+    orgStore.setActiveOrganizationId(null)
+    orgStore.setRolesInActiveOrg([])
+    orgStore.setRolesByOrg({})
+  }
+  finally {
     orgStore.loading = false
   }
-}
-
-/**
- * @param {import('@supabase/supabase-js').SupabaseClient} supabase
- * @param {ReturnType<typeof useOrganizationStore>} orgStore
- * @param {string} userId
- */
-async function loadRolesForActiveOrg(supabase, orgStore, userId) {
-  const orgId = orgStore.activeOrganizationId
-  if (!orgId) {
-    orgStore.setRolesInActiveOrg([])
-    return
-  }
-
-  const { data, error } = await supabase
-    .from('user_roles')
-    .select('id, role_id, roles(id, name, description, is_system)')
-    .eq('organization_id', orgId)
-    .eq('user_id', userId)
-
-  if (error) {
-    console.warn('[auth] Failed to load roles', error.message)
-    orgStore.setRolesInActiveOrg([])
-    return
-  }
-
-  orgStore.setRolesInActiveOrg(
-    (data || []).map((row) => row.roles).filter(Boolean),
-  )
 }

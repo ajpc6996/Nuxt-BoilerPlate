@@ -2,7 +2,6 @@
  * Active organization context (single active org).
  */
 export function useOrganization() {
-  const supabase = useSupabase()
   const authStore = useAuthStore()
   const orgStore = useOrganizationStore()
 
@@ -26,21 +25,7 @@ export function useOrganization() {
     }
 
     orgStore.setActiveOrganizationId(orgId)
-
-    if (!auth.user?.id) {
-      orgStore.setRolesInActiveOrg([])
-      return
-    }
-
-    const { data } = await supabase
-      .from('user_roles')
-      .select('id, role_id, roles(id, name, description, is_system)')
-      .eq('organization_id', orgId)
-      .eq('user_id', auth.user.id)
-
-    orgStore.setRolesInActiveOrg(
-      (data || []).map((row) => row.roles).filter(Boolean),
-    )
+    orgStore.applyRolesForOrg(orgId)
   }
 
   /**

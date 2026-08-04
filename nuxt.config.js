@@ -55,6 +55,8 @@ export default defineNuxtConfig({
       process.env.SUPABASE_SECRET_KEY
       || process.env.SUPABASE_SERVICE_ROLE_KEY
       || '',
+    // AES key material for connection_secrets (any long random string)
+    connectorSecretsKey: process.env.CONNECTOR_SECRETS_KEY || '',
     public: {
       supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
       // Prefer publishable keys (sb_publishable_...). Legacy anon kept as fallback.

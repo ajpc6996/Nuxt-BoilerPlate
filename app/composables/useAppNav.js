@@ -12,7 +12,20 @@ export function useAppNav() {
   const searchQuery = useState('app-sidebar-search', () => '')
   const openGroups = useState('app-sidebar-open-groups', () => ({}))
 
-  const groups = computed(() => appNavGroups)
+  const { allowsRoles } = usePermissions()
+
+  const groups = computed(() => {
+    return appNavGroups
+      .map((group) => {
+        if (!allowsRoles(group.roles)) return null
+        const children = (group.children || []).filter((item) =>
+          allowsRoles(item.roles),
+        )
+        if (!children.length) return null
+        return { ...group, children }
+      })
+      .filter(Boolean)
+  })
 
   const filteredGroups = computed(() => {
     const q = searchQuery.value.trim().toLowerCase()

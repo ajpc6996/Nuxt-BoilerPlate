@@ -6,6 +6,8 @@ export const useOrganizationStore = defineStore('organization', () => {
   const memberships = ref([])
   const activeOrganizationId = ref(null)
   const rolesInActiveOrg = ref([])
+  /** @type {import('vue').Ref<Record<string, Array<{ id: string, name: string }>>>} */
+  const rolesByOrg = ref({})
   const loading = ref(false)
 
   const activeOrganization = computed(() =>
@@ -50,10 +52,31 @@ export const useOrganizationStore = defineStore('organization', () => {
     rolesInActiveOrg.value = Array.isArray(roles) ? roles : []
   }
 
+  /**
+   * @param {Record<string, Array<{ id: string, name: string }>>} next
+   */
+  function setRolesByOrg(next) {
+    rolesByOrg.value = next && typeof next === 'object' ? next : {}
+  }
+
+  /**
+   * @param {string|null} orgId
+   */
+  function applyRolesForOrg(orgId) {
+    if (!orgId) {
+      rolesInActiveOrg.value = []
+      return
+    }
+    rolesInActiveOrg.value = Array.isArray(rolesByOrg.value[orgId])
+      ? rolesByOrg.value[orgId]
+      : []
+  }
+
   function reset() {
     memberships.value = []
     activeOrganizationId.value = null
     rolesInActiveOrg.value = []
+    rolesByOrg.value = {}
   }
 
   return {
@@ -61,12 +84,15 @@ export const useOrganizationStore = defineStore('organization', () => {
     activeOrganizationId,
     activeOrganization,
     rolesInActiveOrg,
+    rolesByOrg,
     loading,
     isOrgAdmin,
     setMemberships,
     setActiveOrganizationId,
     restoreActiveOrganizationId,
     setRolesInActiveOrg,
+    setRolesByOrg,
+    applyRolesForOrg,
     reset,
   }
 })

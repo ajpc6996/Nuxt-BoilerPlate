@@ -1,9 +1,11 @@
 /**
  * In-app navigation: collapsible groups with link items.
  * Filterable via the sidebar search.
+ * Optional `roles` on items/groups: 'platform' | 'orgAdmin'
+ * (omit = visible to all authenticated app users).
  *
- * @typedef {{ id: string, label: string, to: string }} NavItem
- * @typedef {{ id: string, label: string, children: NavItem[] }} NavGroup
+ * @typedef {{ id: string, label: string, to: string, roles?: Array<'platform'|'orgAdmin'> }} NavItem
+ * @typedef {{ id: string, label: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
  */
 
 /** @type {NavGroup[]} */
@@ -21,6 +23,25 @@ export const appNavGroups = [
         id: 'widgets',
         label: 'Widgets',
         to: '/widgets',
+      },
+    ],
+  },
+  {
+    id: 'data-sources',
+    label: 'Data Sources',
+    roles: ['platform', 'orgAdmin'],
+    children: [
+      {
+        id: 'connector-types',
+        label: 'Connector Type',
+        to: '/data-sources/connector-types',
+        roles: ['platform'],
+      },
+      {
+        id: 'connections',
+        label: 'Connections',
+        to: '/data-sources/connections',
+        roles: ['platform', 'orgAdmin'],
       },
     ],
   },
