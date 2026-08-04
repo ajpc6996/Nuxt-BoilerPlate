@@ -6,31 +6,43 @@
           Dashboard
         </h1>
         <p class="mt-2 text-[var(--mute)]">
-          This page is protected by the
-          <code class="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-sm text-[var(--accent-ink)]">auth</code>
-          middleware.
+          Signed in with Supabase Auth. Active organization drives tenant data and Administration.
         </p>
       </div>
       <button
         type="button"
         class="btn-secondary !px-4 !py-2"
-        @click="logout"
+        @click="signOut"
       >
         Log out
       </button>
     </div>
 
     <section class="panel mt-10 px-6 py-6">
-      <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Welcome back</h2>
+      <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Welcome</h2>
       <p class="mt-2 text-[var(--mute)]">
-        Signed in as
-        <span class="font-medium text-[var(--ink)]">
-          {{ user?.name || 'Authenticated user' }}
-        </span>
-        <template v-if="user?.email">
-          ({{ user.email }})
-        </template>
+        {{ profile?.full_name || user?.email || 'Authenticated user' }}
       </p>
+      <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+        <div>
+          <dt class="text-[var(--mute-soft)]">Email</dt>
+          <dd class="text-[var(--ink)]">{{ profile?.email || user?.email }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--mute-soft)]">Assurance</dt>
+          <dd class="text-[var(--accent-ink)]">{{ aal }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--mute-soft)]">Active org</dt>
+          <dd class="text-[var(--ink)]">{{ activeOrganization?.name || 'None' }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--mute-soft)]">Roles</dt>
+          <dd class="text-[var(--ink)]">
+            {{ rolesInActiveOrg.map((r) => r.name).join(', ') || '—' }}
+          </dd>
+        </div>
+      </dl>
     </section>
   </div>
 </template>
@@ -45,5 +57,6 @@ useHead({
   title: 'Dashboard',
 })
 
-const { user, logout } = useAuth()
+const { user, profile, aal, signOut } = useAuth()
+const { activeOrganization, rolesInActiveOrg } = useOrganization()
 </script>

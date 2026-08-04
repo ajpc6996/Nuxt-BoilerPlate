@@ -30,9 +30,14 @@
 - Use JSDoc comments (`/** @param ... */`) if code clarification or basic IDE type hinting is required.
 
 ## Authentication & Middleware Rules
+- Authentication is Supabase Auth (email/password + optional TOTP MFA). Never store recoverable passwords.
 - Route protection must use the named middleware `auth.js` inside the Vue script setup.
 - To protect a page, always add: `definePageMeta({ middleware: 'auth' })` inside a pure JavaScript `<script setup>` tag.
-- Use the `useAuth()` composable to read or manipulate user authentication states.
+- Administration pages use `middleware: ['auth', 'admin']` (requires Org Admin or Platform Admin + aal2).
+- Platform pages use `middleware: ['auth', 'platform-admin']` (requires platform admin + aal2).
+- Use `useAuth()`, `useOrganization()`, and `usePermissions()` for session, active org, and menu gates.
+- Apply SQL from `supabase/migrations/` and follow `supabase/BOOTSTRAP.md` to promote the first platform admin.
+- Configure `NUXT_PUBLIC_SUPABASE_URL`, `NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`), and `SUPABASE_SECRET_KEY` (`sb_secret_...`) via `.env`. Legacy `ANON` / `SERVICE_ROLE` env vars are fallbacks only until end of 2026.
 
 ## Pinia State Management Rules
 - All global application state must be managed via Pinia stores located in the `/stores` directory.

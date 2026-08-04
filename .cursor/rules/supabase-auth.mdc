@@ -1,0 +1,15 @@
+---
+description: Supabase multi-tenant auth, MFA, org Admin, and platform admin rules
+alwaysApply: true
+---
+
+# Supabase Auth & Tenancy
+
+- Identity: Supabase Auth only. Passwords are one-way hashed; admins may invite/create/reset, never read passwords.
+- Tenancy tables: `profiles`, `organizations`, `organization_members`, `roles`, `user_roles` (see `supabase/migrations`).
+- Single active org via `useOrganization()` / Pinia `organization` store.
+- Platform admin (`profiles.is_platform_admin`) creates orgs and can act across tenants; Org `Admin` role manages one org.
+- MFA: step-up (`aal2`) required for Administration and Platform; platform powers must never work on `aal1` alone. Org `mfa_mode` + user `mfa_opt_in` for members.
+- UI: `UserMenu` (My User / Security / Admin / Platform), login with Reset Password on failure.
+- Server admin APIs under `server/api/admin/*` use the **secret** key (`SUPABASE_SECRET_KEY` / `sb_secret_...`) + caller JWT `aal2` checks. Never expose secret keys to the client.
+- Prefer publishable/secret API keys over legacy anon/service_role JWTs. See `.env.example` and `shared/supabaseKeys.js`.

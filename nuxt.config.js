@@ -44,6 +44,32 @@ export default defineNuxtConfig({
     transpile: ['ag-grid-vue3', 'ag-grid-community'],
   },
 
+  runtimeConfig: {
+    // Prefer new secret keys (sb_secret_...). Legacy service_role kept as fallback.
+    supabaseSecretKey:
+      process.env.SUPABASE_SECRET_KEY
+      || process.env.SUPABASE_SERVICE_ROLE_KEY
+      || '',
+    // @deprecated alias — use supabaseSecretKey
+    supabaseServiceRoleKey:
+      process.env.SUPABASE_SECRET_KEY
+      || process.env.SUPABASE_SERVICE_ROLE_KEY
+      || '',
+    public: {
+      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
+      // Prefer publishable keys (sb_publishable_...). Legacy anon kept as fallback.
+      supabasePublishableKey:
+        process.env.NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        || process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY
+        || '',
+      // @deprecated alias — use supabasePublishableKey
+      supabaseAnonKey:
+        process.env.NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        || process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY
+        || '',
+    },
+  },
+
   app: {
     head: {
       htmlAttrs: {
