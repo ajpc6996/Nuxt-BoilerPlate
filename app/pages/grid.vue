@@ -134,7 +134,7 @@ import InputNumber from 'openvue/inputnumber'
 import GridEditButtonCell from '~/components/grid/GridEditButtonCell.vue'
 
 definePageMeta({
-  layout: 'plain',
+  layout: 'app',
 })
 
 useHead({

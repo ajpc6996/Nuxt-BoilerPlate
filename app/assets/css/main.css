@@ -52,7 +52,7 @@ html[data-theme='dark'] {
   --color-ghost: var(--ghost);
   --color-btn-on-accent: var(--btn-on-accent);
 
-  --font-display: 'Fraunces', Georgia, serif;
+  --font-display: 'DM Sans', system-ui, sans-serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }

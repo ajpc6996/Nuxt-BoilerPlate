@@ -1,6 +1,6 @@
 /**
- * Brand / product name from app config (default: Zorro).
- * Override in `app/app.config.js` via `appName`.
+ * Brand / product name + logo from app config.
+ * Override in `app/app.config.js` via `appName` / `logoUrl`.
  */
 export function useAppName() {
   const config = useAppConfig()
@@ -10,5 +10,12 @@ export function useAppName() {
     return typeof value === 'string' && value.trim() ? value.trim() : 'Zorro'
   })
 
-  return { appName }
+  const logoUrl = computed(() => {
+    const value = config.logoUrl
+    return typeof value === 'string' && value.trim() ? value.trim() : ''
+  })
+
+  const monogram = computed(() => appName.value.slice(0, 1).toUpperCase())
+
+  return { appName, logoUrl, monogram }
 }

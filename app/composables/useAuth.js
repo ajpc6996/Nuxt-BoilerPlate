@@ -45,7 +45,7 @@ export function useAuth() {
     await navigateTo(
       typeof redirect === 'string' && redirect.startsWith('/')
         ? redirect
-        : '/dashboard',
+        : '/',
     )
     return { data, error: null, mfaRequired: false }
   }

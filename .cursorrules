@@ -8,7 +8,10 @@
 
 ## App branding
 - Brand / product name comes from `app/app.config.js` (`appName`, default `"Zorro"`).
-- Use `useAppName()` (or `useAppConfig().appName`) for visible brand text — do not hardcode product names in components.
+- Optional logo via `logoUrl` in the same config (empty = monogram fallback).
+- Use `useAppName()` for visible brand text — do not hardcode product names in components.
+- Authenticated UI uses `layout: 'app'` (persistent header + searchable left nav). Nav groups live in `app/config/nav.js`.
+- Marketing reference page is unlinked at `/reference` (`layout: 'default'`). Auth pages use `layout: 'plain'`.
 
 ## Dark Theme (default)
 - The default visual system is **Dark Theme** (Sintrex Dark): charcoal surfaces + cyan accent `#00c2c7`.

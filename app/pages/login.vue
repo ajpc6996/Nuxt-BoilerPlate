@@ -87,7 +87,7 @@ watch(
   isAuthenticated,
   (value) => {
     if (value && route.path === '/login') {
-      navigateTo('/dashboard')
+      navigateTo('/')
     }
   },
   { immediate: true },

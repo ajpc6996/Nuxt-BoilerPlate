@@ -106,7 +106,7 @@ const goNext = async () => {
   await navigateTo(
     typeof redirect === 'string' && redirect.startsWith('/')
       ? redirect
-      : '/dashboard',
+      : '/',
   )
 }
 
