@@ -14,6 +14,24 @@
 /** @type {NavGroup[]} */
 export const appNavGroups = [
   {
+    id: 'dashboards',
+    label: 'Dashboards',
+    to: '/dashboards',
+    children: [
+      {
+        id: 'dashboards-view',
+        label: 'View Dashboards',
+        to: '/dashboards',
+      },
+      {
+        id: 'dashboards-configure',
+        label: 'Configure Dashboards',
+        to: '/dashboards/configure',
+        roles: ['platform', 'orgAdmin'],
+      },
+    ],
+  },
+  {
     id: 'demo',
     label: 'Demo',
     children: [

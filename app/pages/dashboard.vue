@@ -4,7 +4,7 @@ definePageMeta({
   middleware: 'auth',
 })
 
-await navigateTo('/', { replace: true })
+await navigateTo('/dashboards', { replace: true })
 </script>
 
 <template>

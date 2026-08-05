@@ -158,6 +158,15 @@ Each Source has a canvas: **Retrieve → (Filter | Transform)* → Ingest**.
 - **Test** never writes; returns retrieved vs kept counts (+ step samples)
 - **Run** writes pipeline output to `ingest.<destination>`
 
+### Dashboards (v1)
+
+Apply `20260805200000_dashboards.sql`.
+
+- **View Dashboards** (`/dashboards`) — org members see dashboards by visibility (`public` / `role` / `private`); Org Admin & Platform Admin see all
+- **Configure Dashboards** (`/dashboards/configure`) — Org Admin / Platform (aal2): create, edit widgets, joins, aggregates
+- Widgets query ingest destinations via `dashboard_run_query` (sum/count/min/max, multi-table inner joins, optional series split)
+- Clicking chart categories applies a cross-filter to other widgets on the same dashboard
+
 ### Merge sources (multi-input)
 
 Apply `20260805140000_ingest_read_rows.sql` (RPC `ingest_read_rows` for last-ingest reads).
