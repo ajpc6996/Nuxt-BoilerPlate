@@ -2,6 +2,9 @@
   <NuxtLayout>
     <NuxtPage />
   </NuxtLayout>
+  <ClientOnly>
+    <AppConfirmDialog />
+  </ClientOnly>
 </template>
 
 <script setup>

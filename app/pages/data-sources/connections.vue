@@ -216,6 +216,7 @@ useHead({ title: 'Connections' })
 
 const { activeOrganization } = useOrganization()
 const authedFetch = useAuthedFetch()
+const { confirm: appConfirm } = useAppConfirm()
 
 const items = ref([])
 const catalog = ref([])
@@ -376,7 +377,13 @@ async function saveConnection() {
  * @param {Record<string, unknown>} row
  */
 async function removeConnection(row) {
-  if (!confirm(`Delete connection “${row.name}”? Linked sources will also be removed.`)) return
+  const ok = await appConfirm({
+    title: 'Delete connection?',
+    message: `Delete connection “${row.name}”? Linked sources will also be removed.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
   busyId.value = row.id
   error.value = ''
   try {

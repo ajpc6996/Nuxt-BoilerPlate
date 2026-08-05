@@ -41,7 +41,15 @@ export default defineNuxtConfig({
   },
 
   build: {
-    transpile: ['ag-grid-vue3', 'ag-grid-community', 'vue-data-ui'],
+    transpile: [
+      'ag-grid-vue3',
+      'ag-grid-community',
+      'vue-data-ui',
+      '@vue-flow/core',
+      '@vue-flow/background',
+      '@vue-flow/controls',
+      '@vue-flow/minimap',
+    ],
   },
 
   runtimeConfig: {

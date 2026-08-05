@@ -1,0 +1,28 @@
+---
+description: Use AppConfirmDialog instead of browser confirm/alert
+alwaysApply: true
+---
+
+# Confirm / alert dialogs
+
+Never use `window.confirm`, `window.alert`, or `window.prompt` in app UI.
+
+Use `useAppConfirm()` instead:
+
+```js
+const { confirm, alert } = useAppConfirm()
+
+const ok = await confirm({
+  title: 'Delete source?',
+  message: `Delete “${name}”? This cannot be undone.`,
+  confirmLabel: 'Delete',
+  danger: true,
+})
+if (!ok) return
+
+await alert({ title: 'Saved', message: 'Changes were saved.' })
+```
+
+- Host is `AppConfirmDialog` in `app/app.vue` (z-index above full-screen editors).
+- Prefer `danger: true` for destructive actions (Delete, Remove).
+- Confirm handlers must be `async` when awaiting the dialog.

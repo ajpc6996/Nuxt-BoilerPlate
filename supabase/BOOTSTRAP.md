@@ -138,3 +138,14 @@ On a source, enable **Expand URL from ingest table**, set a path like
 `/teams/{team_id}/players`, pick a prior ingest table, and map each `{var}` to a column.
 A run issues one request per distinct value set (capped; test mode uses up to 3) and unions rows into the destination.
 Credentials still come from the linked **connection**.
+
+### Pipeline (Filter)
+
+Apply `20260805120000_data_source_pipeline.sql`.
+
+Each Source has a canvas: **Retrieve → (Filter) → Ingest**.
+
+- Drag **Filter** onto the canvas, connect Retrieve → Filter → Ingest
+- Filter: keep flat fields + AND rules (`eq`, `neq`, `contains`, `not_contains`)
+- **Test** never writes; returns retrieved vs kept counts (+ step samples when **Detailed debugging** is on)
+- **Run** writes only the filtered rows to `ingest.<destination>`

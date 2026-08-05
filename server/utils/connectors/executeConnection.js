@@ -1,5 +1,7 @@
 import { decryptSecrets, encryptSecrets } from '../connectorCrypto.js'
 import { getConnectorRunner } from './registry.js'
+import { normalizePipeline } from './pipeline/defaults.js'
+import { executePipeline } from './pipeline/runPipeline.js'
 
 /**
  * Merge connection (shared) + data-source (endpoint) config.
@@ -16,7 +18,7 @@ export function mergeConnectorConfig(connectionConfig, sourceConfig) {
 
 /**
  * Execute a data source in test or run mode.
- * Uses shared connection credentials; lands rows into ingest.<destination_table>.
+ * Retrieve → pipeline (Filter…) → Ingest (run mode only).
  *
  * @param {{
  *   dataSourceId: string,
@@ -59,7 +61,6 @@ export async function executeDataSource(opts) {
     secrets = decryptSecrets(secretRow.ciphertext)
   }
 
-  // Optional: persist refreshed tokens back onto the connection
   const persistSecrets = async (nextSecrets) => {
     if (!nextSecrets || typeof nextSecrets !== 'object') return
     const ciphertext = encryptSecrets(nextSecrets)
@@ -92,6 +93,7 @@ export async function executeDataSource(opts) {
 
   const physicalTable = `ingest.${dataSource.destination_table}`
   const mergedConfig = mergeConnectorConfig(connection.config, dataSource.config)
+  const pipeline = normalizePipeline(dataSource.pipeline)
 
   try {
     const runner = getConnectorRunner(type.runner_key)
@@ -108,7 +110,17 @@ export async function executeDataSource(opts) {
       await persistSecrets(secrets)
     }
 
-    const rows = Array.isArray(result.rows) ? result.rows : []
+    const retrievedRows = Array.isArray(result.rows) ? result.rows : []
+    // Always collect step samples on Test so the editor output panel can show debug.
+    const pipelineDebug = Boolean(pipeline.debug) || mode === 'test'
+    const pipelineResult = executePipeline({
+      pipeline,
+      retrievedRows,
+      retrieveMeta: result.meta || {},
+      debug: pipelineDebug,
+    })
+
+    const rows = pipelineResult.rows
     const sample = rows.slice(0, mode === 'test' ? 5 : rows.length)
     let rowsWritten = 0
 
@@ -161,6 +173,11 @@ export async function executeDataSource(opts) {
       }
     }
 
+    const summary = {
+      ...pipelineResult.summary,
+      written: rowsWritten,
+    }
+
     await admin
       .from('connection_runs')
       .update({
@@ -180,6 +197,11 @@ export async function executeDataSource(opts) {
           ...(dataSource.sync_state || {}),
           lastMeta: result.meta || {},
           lastRowCount: rows.length,
+          lastRetrievedCount: retrievedRows.length,
+          lastPipelineSummary: summary,
+          lastPipelineDebug: pipelineDebug
+            ? { steps: pipelineResult.steps, at: new Date().toISOString() }
+            : null,
           physicalTable,
         },
       })
@@ -196,10 +218,13 @@ export async function executeDataSource(opts) {
     return {
       runId: run.id,
       mode,
-      rowsFetched: rows.length,
+      rowsFetched: retrievedRows.length,
+      rowsAfterPipeline: rows.length,
       rowsWritten,
       sample: mode === 'test' ? sample : sample.slice(0, 3),
       meta: result.meta || {},
+      pipelineSummary: summary,
+      pipelineSteps: pipelineDebug ? pipelineResult.steps : undefined,
       destinationTable: dataSource.destination_table,
       physicalTable,
       connectionId: connection.id,
@@ -239,7 +264,6 @@ export async function executeConnection(opts) {
   if (opts.dataSourceId) {
     return executeDataSource(opts)
   }
-  // Legacy: if only connectionId, run the first linked data source
   const admin = useSupabaseAdmin()
   const { data: ds } = await admin
     .from('data_sources')

@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
 
   const { data, error } = await admin
     .from('data_sources')
-    .select('id, name, status, destination_table, config, sync_state, last_run_at, last_error, created_at, updated_at, connection_id, connections(id, name, connector_type_id, connector_types(*))')
+    .select('id, name, status, destination_table, config, pipeline, sync_state, last_run_at, last_error, created_at, updated_at, connection_id, connections(id, name, connector_type_id, connector_types(*))')
     .eq('id', id)
     .eq('organization_id', organizationId)
     .maybeSingle()

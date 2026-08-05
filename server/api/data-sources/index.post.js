@@ -1,4 +1,6 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
+import { normalizePipeline } from '~~/server/utils/connectors/pipeline/defaults.js'
+import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
@@ -7,12 +9,18 @@ export default defineEventHandler(async (event) => {
   const name = String(body?.name || '').trim()
   const destinationTable = sanitizeDestinationTable(body?.destinationTable)
   const config = body?.config && typeof body.config === 'object' ? body.config : {}
+  const pipeline = normalizePipeline(body?.pipeline)
 
   if (!organizationId || !connectionId || !name) {
     throw createError({
       statusCode: 400,
       statusMessage: 'organizationId, connectionId, and name are required',
     })
+  }
+
+  const validation = validatePipeline(pipeline)
+  if (!validation.ok) {
+    throw createError({ statusCode: 400, statusMessage: validation.error })
   }
 
   const { user } = await requireOrgAdmin(event, organizationId)
@@ -40,10 +48,11 @@ export default defineEventHandler(async (event) => {
       name,
       destination_table: destinationTable,
       config,
+      pipeline,
       status: 'draft',
       created_by: user.id,
     })
-    .select('id, name, status, destination_table, config, connection_id, created_at')
+    .select('id, name, status, destination_table, config, pipeline, connection_id, created_at')
     .single()
 
   if (error) {

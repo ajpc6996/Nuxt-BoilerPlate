@@ -31,6 +31,7 @@
 - Always write clean, modular vanilla JavaScript.
 - Avoid using TypeScript types, interfaces, or generics.
 - Use JSDoc comments (`/** @param ... */`) if code clarification or basic IDE type hinting is required.
+- Never use `window.confirm` / `window.alert` / `window.prompt`. Use `useAppConfirm()` (`confirm` / `alert`) so dialogs match Dark Theme via `AppConfirmDialog`.
 
 ## Authentication & Middleware Rules
 - Authentication is Supabase Auth (email/password + optional TOTP MFA). Never store recoverable passwords.

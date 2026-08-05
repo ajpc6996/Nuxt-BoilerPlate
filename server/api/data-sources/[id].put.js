@@ -1,4 +1,6 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
+import { normalizePipeline } from '~~/server/utils/connectors/pipeline/defaults.js'
+import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -34,6 +36,14 @@ export default defineEventHandler(async (event) => {
   if (body.destinationTable != null) {
     patch.destination_table = sanitizeDestinationTable(body.destinationTable)
   }
+  if (body.pipeline != null) {
+    const pipeline = normalizePipeline(body.pipeline)
+    const validation = validatePipeline(pipeline)
+    if (!validation.ok) {
+      throw createError({ statusCode: 400, statusMessage: validation.error })
+    }
+    patch.pipeline = pipeline
+  }
   if (body.connectionId != null) {
     const connectionId = String(body.connectionId)
     const { data: connection } = await admin
@@ -53,7 +63,7 @@ export default defineEventHandler(async (event) => {
     .from('data_sources')
     .update(patch)
     .eq('id', id)
-    .select('id, name, status, destination_table, config, last_run_at, last_error, updated_at, connection_id')
+    .select('id, name, status, destination_table, config, pipeline, last_run_at, last_error, updated_at, connection_id')
     .single()
 
   if (error) {

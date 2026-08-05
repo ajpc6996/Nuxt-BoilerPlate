@@ -6,7 +6,7 @@
           Sources
         </h1>
         <p class="mt-2 max-w-2xl text-[var(--mute)]">
-          Endpoint-specific ingest jobs. Each source reuses a connection’s credentials; path, paging, and destination are per source.
+          Endpoint ingest jobs with a Retrieve → Filter → Ingest pipeline. Credentials come from the linked connection.
           Active org:
           <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
         </p>
@@ -35,7 +35,7 @@
 
     <p
       v-if="error"
-      class="panel mt-6 border-[var(--danger)] px-4 py-3 text-sm text-[var(--danger)]"
+      class="panel mt-6 whitespace-pre-wrap border-[var(--danger)] px-4 py-3 text-sm text-[var(--danger)]"
     >
       {{ error }}
     </p>
@@ -85,7 +85,7 @@
             <td class="px-3 py-3">
               <div class="flex flex-col gap-1">
                 <span
-                  class="rounded px-2 py-0.5 text-xs font-medium w-fit"
+                  class="w-fit rounded px-2 py-0.5 text-xs font-medium"
                   :class="statusClass(row.status)"
                   :title="row.status === 'error' ? row.last_error : ''"
                 >
@@ -93,7 +93,7 @@
                 </span>
                 <p
                   v-if="row.status === 'error' && row.last_error"
-                  class="text-xs text-[var(--danger)] max-w-[26rem] whitespace-pre-wrap break-words"
+                  class="max-w-[26rem] whitespace-pre-wrap break-words text-xs text-[var(--danger)]"
                 >
                   {{ truncateError(row.last_error) }}
                 </p>
@@ -107,6 +107,7 @@
                 <button
                   type="button"
                   class="btn-secondary !px-2 !py-1 text-xs"
+                  :disabled="Boolean(busyId)"
                   @click="openEdit(row)"
                 >
                   Edit
@@ -114,23 +115,23 @@
                 <button
                   type="button"
                   class="btn-secondary !px-2 !py-1 text-xs"
-                  :disabled="busyId === row.id"
+                  :disabled="Boolean(busyId)"
                   @click="runSource(row, 'test')"
                 >
-                  Test
+                  {{ busyId === row.id && busyMode === 'test' ? 'Testing…' : 'Test' }}
                 </button>
                 <button
                   type="button"
                   class="btn-primary !px-2 !py-1 text-xs"
-                  :disabled="busyId === row.id"
+                  :disabled="Boolean(busyId)"
                   @click="runSource(row, 'run')"
                 >
-                  Run
+                  {{ busyId === row.id && busyMode === 'run' ? 'Running…' : 'Run' }}
                 </button>
                 <button
                   type="button"
                   class="text-xs text-[var(--danger)] hover:underline"
-                  :disabled="busyId === row.id"
+                  :disabled="Boolean(busyId)"
                   @click="removeSource(row)"
                 >
                   Delete
@@ -152,98 +153,231 @@
 
     <div
       v-if="editorOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--modal-scrim)] p-4"
-      @click.self="editorOpen = false"
+      class="fixed inset-0 z-50 flex flex-col bg-[var(--surface)]"
     >
-      <div class="panel max-h-[90vh] w-full max-w-xl overflow-y-auto px-6 py-5">
-        <h2 class="font-display text-xl font-semibold text-[var(--ink)]">
-          {{ editingId ? 'Edit source' : 'New source' }}
-        </h2>
+      <header class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] px-4 py-3">
+        <div class="min-w-0 flex-1">
+          <h2 class="font-display text-lg font-semibold text-[var(--ink)]">
+            {{ editingId ? 'Edit source' : 'New source' }}
+            <span
+              v-if="isDirty"
+              class="ml-2 text-xs font-normal text-[var(--mute)]"
+            >(unsaved)</span>
+          </h2>
+          <p class="text-xs text-[var(--mute)]">
+            Double-click Retrieve / Filter / Ingest to configure. Drag cyan handles to link nodes.
+          </p>
+        </div>
+        <input
+          v-model="form.name"
+          type="text"
+          placeholder="Source name"
+          class="w-44 rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)]"
+        >
+        <select
+          v-model="form.connectionId"
+          class="max-w-[14rem] rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)]"
+          @change="onConnectionChange"
+        >
+          <option value="" disabled>Connection…</option>
+          <option
+            v-for="c in connections"
+            :key="c.id"
+            :value="c.id"
+          >
+            {{ c.name }}
+          </option>
+        </select>
+        <input
+          v-model="form.destinationTable"
+          type="text"
+          placeholder="destination_table"
+          class="w-44 rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 font-mono text-sm text-[var(--ink)]"
+        >
+        <button
+          type="button"
+          class="btn-secondary !px-3 !py-1.5"
+          :disabled="editorBusy"
+          @click="runFromEditor('test')"
+        >
+          {{ editorBusyMode === 'test' ? 'Testing…' : 'Test' }}
+        </button>
+        <button
+          type="button"
+          class="btn-primary !px-3 !py-1.5"
+          :disabled="editorBusy"
+          @click="runFromEditor('run')"
+        >
+          {{ editorBusyMode === 'run' ? 'Running…' : 'Run' }}
+        </button>
+        <button
+          type="button"
+          class="btn-secondary !px-3 !py-1.5"
+          :disabled="editorBusy"
+          @click="closeEditor"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn-primary !px-3 !py-1.5"
+          :disabled="editorBusy || saving"
+          @click="saveSource()"
+        >
+          {{ saving || editorBusyMode === 'save' ? 'Saving…' : 'Save' }}
+        </button>
+      </header>
 
-        <div class="mt-4 space-y-4">
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Name</label>
-            <input
-              v-model="form.name"
-              type="text"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-            >
+      <div class="relative flex min-h-0 flex-1 flex-col">
+        <div
+          v-if="editorBusy"
+          class="absolute inset-0 z-30 flex items-center justify-center bg-[var(--surface)]/70 backdrop-blur-[1px]"
+        >
+          <div class="panel flex items-center gap-3 px-5 py-4 text-sm text-[var(--ink)]">
+            <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent" />
+            <span>{{ editorBusyLabel }}</span>
           </div>
+        </div>
 
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Connection</label>
-            <select
-              v-model="form.connectionId"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-              @change="onConnectionChange"
-            >
-              <option value="" disabled>Select connection…</option>
-              <option
-                v-for="c in connections"
-                :key="c.id"
-                :value="c.id"
+        <div class="relative min-h-0 flex-1 overflow-hidden p-3 pb-0">
+          <ClientOnly>
+            <div class="h-full min-h-0">
+              <SourcePipelineCanvas
+                ref="pipelineCanvas"
+                v-model="form.pipeline"
+                :destination-table="form.destinationTable"
+                class="h-full min-h-0"
               >
-                {{ c.name }} ({{ c.connector_types?.name || 'type' }})
-              </option>
-            </select>
-          </div>
+                <template #node-config="{ node, close, updateFilter, removeFilter }">
+                  <div
+                    v-if="node.type === 'retrieve'"
+                    class="space-y-3"
+                  >
+                    <p class="text-xs text-[var(--mute)]">
+                      Shared credentials come from the connection above. Configure the endpoint here.
+                    </p>
+                    <div v-if="selectedType">
+                      <SchemaFormFields
+                        v-model="form.config"
+                        :schema="selectedType.config_schema"
+                        :omit-keys="lookupOmitKeys"
+                      />
+                      <div
+                        v-if="supportsLookup"
+                        class="mt-4"
+                      >
+                        <ConnectionLookupConfig
+                          v-model="form.config"
+                          :path-template="String(form.config.path || '')"
+                          :organization-id="activeOrganization?.id || ''"
+                        />
+                      </div>
+                    </div>
+                    <p
+                      v-else
+                      class="text-sm text-[var(--mute)]"
+                    >
+                      Select a connection first.
+                    </p>
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                  </div>
 
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
-            <input
-              v-model="form.destinationTable"
-              type="text"
-              placeholder="e.g. teams_players"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
-            >
-            <p class="text-xs text-[var(--mute-soft)]">
-              Creates <span class="font-mono">ingest.&lt;name&gt;</span>. Re-run replaces this source’s rows.
-            </p>
-          </div>
+                  <div
+                    v-else-if="node.type === 'filter'"
+                    class="space-y-4"
+                  >
+                    <PipelineFilterConfigPanel
+                      ref="filterConfigPanel"
+                      :model-value="node.data || {}"
+                      :sample-object="retrieveSample"
+                      :loading-sample="loadingRetrieveSample"
+                      @update:model-value="updateFilter"
+                      @fetch-sample="loadRetrieveSample"
+                    />
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class="btn-secondary !px-3 !py-1.5 text-sm"
+                        @click="close"
+                      >
+                        Done
+                      </button>
+                      <button
+                        type="button"
+                        class="text-sm text-[var(--danger)] hover:underline"
+                        @click="removeFilter"
+                      >
+                        Remove Filter node
+                      </button>
+                    </div>
+                  </div>
 
-          <div v-if="selectedType">
-            <h3 class="mb-2 text-sm font-semibold text-[var(--ink)]">Source configuration</h3>
-            <SchemaFormFields
-              v-model="form.config"
-              :schema="selectedType.config_schema"
-              :omit-keys="lookupOmitKeys"
-            />
-            <div
-              v-if="supportsLookup"
-              class="mt-4"
-            >
-              <ConnectionLookupConfig
-                v-model="form.config"
-                :path-template="String(form.config.path || '')"
-                :organization-id="activeOrganization?.id || ''"
-              />
+                  <div
+                    v-else-if="node.type === 'ingest'"
+                    class="space-y-3"
+                  >
+                    <p class="text-xs text-[var(--mute)]">
+                      Pipeline output is written to the destination table set in the header.
+                    </p>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
+                      <input
+                        v-model="form.destinationTable"
+                        type="text"
+                        class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
+                      >
+                      <p class="text-xs text-[var(--mute-soft)]">
+                        Physical table:
+                        <span class="font-mono text-[var(--accent-ink)]">ingest.{{ form.destinationTable || '…' }}</span>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </template>
+              </SourcePipelineCanvas>
             </div>
-          </div>
+            <template #fallback>
+              <div class="flex h-full items-center justify-center text-sm text-[var(--mute)]">
+                Loading canvas…
+              </div>
+            </template>
+          </ClientOnly>
         </div>
 
-        <div class="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            class="btn-secondary !px-4 !py-2"
-            @click="editorOpen = false"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="btn-primary !px-4 !py-2"
-            :disabled="saving"
-            @click="saveSource"
-          >
-            {{ saving ? 'Saving…' : 'Save' }}
-          </button>
-        </div>
+        <SourceOutputPanel
+          class="shrink-0"
+          :collapsed="outputCollapsed"
+          :panel-height="outputHeight"
+          :error="editorError"
+          :summary="outputSummary"
+          :body="outputBody"
+          :busy="editorBusy"
+          :busy-label="editorBusyLabel"
+          @toggle="outputCollapsed = !outputCollapsed"
+          @clear="clearOutput"
+          @resize="onOutputResize"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { createDefaultPipeline, normalizePipeline } from '~~/shared/pipelineDefaults.js'
+import PipelineFilterConfigPanel from '~/components/pipeline/FilterConfigPanel.vue'
+
 definePageMeta({
   layout: 'app',
   middleware: ['auth', 'admin'],
@@ -254,6 +388,7 @@ useHead({ title: 'Sources' })
 const route = useRoute()
 const { activeOrganization } = useOrganization()
 const authedFetch = useAuthedFetch()
+const { confirm: appConfirm } = useAppConfirm()
 
 const items = ref([])
 const connections = ref([])
@@ -262,15 +397,45 @@ const pending = ref(false)
 const error = ref('')
 const notice = ref('')
 const busyId = ref(null)
+/** @type {import('vue').Ref<'test'|'run'|null>} */
+const busyMode = ref(null)
 const editorOpen = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
+const editorError = ref('')
+const editorNotice = ref('')
+const outputSummary = ref('')
+const outputBody = ref('')
+const outputCollapsed = ref(true)
+const outputHeight = ref(220)
+const retrieveSample = ref(null)
+const loadingRetrieveSample = ref(false)
+/** @type {import('vue').Ref<'test'|'run'|'save'|null>} */
+const editorBusyMode = ref(null)
+const pipelineCanvas = ref(null)
+const filterConfigPanel = ref(null)
+const savedSnapshot = ref('')
 
 const form = reactive({
   name: '',
   connectionId: '',
   destinationTable: '',
   config: {},
+  pipeline: createDefaultPipeline(),
+})
+
+const editorBusy = computed(() => Boolean(editorBusyMode.value) || saving.value)
+
+const editorBusyLabel = computed(() => {
+  if (editorBusyMode.value === 'test') return 'Testing source…'
+  if (editorBusyMode.value === 'run') return 'Running source…'
+  if (editorBusyMode.value === 'save' || saving.value) return 'Saving…'
+  return 'Working…'
+})
+
+const isDirty = computed(() => {
+  if (!editorOpen.value) return false
+  return currentSnapshot() !== savedSnapshot.value
 })
 
 const selectedConnection = computed(() =>
@@ -330,13 +495,152 @@ function onConnectionChange() {
   form.config = defaultsFromSchema(selectedType.value?.config_schema)
 }
 
+function flushEditorState() {
+  filterConfigPanel.value?.flush?.()
+  pipelineCanvas.value?.flush?.()
+}
+
+function currentSnapshot() {
+  return JSON.stringify({
+    name: form.name,
+    connectionId: form.connectionId,
+    destinationTable: form.destinationTable,
+    config: form.config,
+    pipeline: form.pipeline,
+  })
+}
+
+function markSaved() {
+  savedSnapshot.value = currentSnapshot()
+}
+
+async function closeEditor() {
+  if (editorBusy.value) return
+  if (isDirty.value) {
+    const ok = await appConfirm({
+      title: 'Discard changes?',
+      message: 'You have unsaved changes. Discard them and close the editor?',
+      confirmLabel: 'Discard',
+      danger: true,
+    })
+    if (!ok) return
+  }
+  editorOpen.value = false
+  editorError.value = ''
+  editorNotice.value = ''
+  outputSummary.value = ''
+  outputBody.value = ''
+  editorBusyMode.value = null
+}
+
+function clearOutput() {
+  editorError.value = ''
+  editorNotice.value = ''
+  outputSummary.value = ''
+  outputBody.value = ''
+}
+
+/**
+ * @param {number} height
+ */
+function onOutputResize(height) {
+  outputHeight.value = height
+  if (outputCollapsed.value) outputCollapsed.value = false
+}
+
+/**
+ * @param {string} message
+ */
+function createErrorLocal(message) {
+  const err = new Error(message)
+  err.data = { statusMessage: message }
+  return err
+}
+
+/**
+ * @param {Record<string, unknown>} res
+ * @param {'test'|'run'} mode
+ */
+function formatRunResult(res, mode) {
+  const summary = res.pipelineSummary || {}
+  const stats = [
+    `retrieved ${summary.retrieved ?? res.rowsFetched ?? 0}`,
+    `kept ${summary.afterPipeline ?? res.rowsAfterPipeline ?? 0}`,
+    `filtered out ${summary.filteredOut ?? 0}`,
+  ]
+  if (mode === 'run') {
+    stats.push(`wrote ${res.rowsWritten}`)
+  }
+  const summaryLine = `${mode === 'test' ? 'Test' : 'Run'} OK — ${stats.join(' · ')}`
+  /** @type {Record<string, unknown>} */
+  const detail = {
+    sample: res.sample || [],
+  }
+  if (res.pipelineSteps?.length) {
+    detail.pipelineSteps = res.pipelineSteps
+  }
+  if (mode === 'run') {
+    detail.physicalTable = res.physicalTable || res.destinationTable
+  }
+  return {
+    summary: summaryLine,
+    body: JSON.stringify(detail, null, 2),
+  }
+}
+
+function applyOutput(summary, body, errorMsg = '') {
+  outputCollapsed.value = false
+  outputSummary.value = summary || ''
+  outputBody.value = body || ''
+  editorNotice.value = summary || ''
+  editorError.value = errorMsg || ''
+}
+
+async function loadRetrieveSample() {
+  if (!activeOrganization.value?.id || !form.connectionId) {
+    applyOutput('', '', 'Select a connection first')
+    return
+  }
+  loadingRetrieveSample.value = true
+  editorError.value = ''
+  try {
+    const res = await authedFetch('/api/data-sources/preview-retrieve', {
+      method: 'POST',
+      body: {
+        organizationId: activeOrganization.value.id,
+        connectionId: form.connectionId,
+        config: form.config,
+      },
+    })
+    retrieveSample.value = res.sample
+    if (!res.sample) {
+      applyOutput('', '', 'Retrieve returned no object sample')
+    }
+  }
+  catch (err) {
+    applyOutput('', '', err?.data?.statusMessage || err?.message || 'Failed to load sample')
+  }
+  finally {
+    loadingRetrieveSample.value = false
+  }
+}
+
 function openCreate() {
   editingId.value = null
+  editorError.value = ''
+  editorNotice.value = ''
+  outputSummary.value = ''
+  outputBody.value = ''
+  retrieveSample.value = null
   form.name = ''
   form.connectionId = String(route.query.connectionId || connections.value[0]?.id || '')
   form.destinationTable = ''
   form.config = defaultsFromSchema(selectedType.value?.config_schema)
+  form.pipeline = createDefaultPipeline()
   editorOpen.value = true
+  nextTick(() => {
+    savedSnapshot.value = ''
+  })
 }
 
 /**
@@ -344,6 +648,11 @@ function openCreate() {
  */
 async function openEdit(row) {
   error.value = ''
+  editorError.value = ''
+  editorNotice.value = ''
+  outputSummary.value = ''
+  outputBody.value = ''
+  retrieveSample.value = null
   try {
     const res = await authedFetch(`/api/data-sources/${row.id}`, {
       query: { organizationId: activeOrganization.value.id },
@@ -354,7 +663,10 @@ async function openEdit(row) {
     form.connectionId = item.connection_id
     form.destinationTable = item.destination_table
     form.config = { ...(item.config || {}) }
+    form.pipeline = normalizePipeline(item.pipeline)
     editorOpen.value = true
+    await nextTick()
+    markSaved()
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load source'
@@ -397,46 +709,141 @@ async function load() {
   }
 }
 
-async function saveSource() {
-  if (!activeOrganization.value?.id) return
+/**
+ * @param {{ close?: boolean }} [opts]
+ * @returns {Promise<boolean>}
+ */
+async function saveSource(opts = {}) {
+  const shouldClose = opts.close !== false
+  if (!activeOrganization.value?.id) return false
   saving.value = true
+  if (!editorBusyMode.value) editorBusyMode.value = 'save'
+  editorError.value = ''
   error.value = ''
   notice.value = ''
   try {
+    flushEditorState()
+    await nextTick()
+
+    if (!String(form.name || '').trim()) {
+      throw createErrorLocal('Name is required')
+    }
+    if (!form.connectionId) {
+      throw createErrorLocal('Connection is required')
+    }
+    if (!String(form.destinationTable || '').trim()) {
+      throw createErrorLocal('Destination table is required')
+    }
+
+    const body = {
+      organizationId: activeOrganization.value.id,
+      name: form.name,
+      connectionId: form.connectionId,
+      destinationTable: form.destinationTable,
+      config: form.config,
+      pipeline: form.pipeline,
+    }
     if (editingId.value) {
       await authedFetch(`/api/data-sources/${editingId.value}`, {
         method: 'PUT',
-        body: {
-          organizationId: activeOrganization.value.id,
-          name: form.name,
-          connectionId: form.connectionId,
-          destinationTable: form.destinationTable,
-          config: form.config,
-        },
+        body,
       })
       notice.value = 'Source updated'
+      editorNotice.value = 'Source saved'
     }
     else {
-      await authedFetch('/api/data-sources', {
+      const res = await authedFetch('/api/data-sources', {
         method: 'POST',
-        body: {
-          organizationId: activeOrganization.value.id,
-          connectionId: form.connectionId,
-          name: form.name,
-          destinationTable: form.destinationTable,
-          config: form.config,
-        },
+        body,
       })
+      editingId.value = res.item?.id || editingId.value
       notice.value = 'Source created'
+      editorNotice.value = 'Source saved'
     }
-    editorOpen.value = false
-    await load()
+    markSaved()
+    if (shouldClose) {
+      editorOpen.value = false
+      await load()
+    }
+    return true
   }
   catch (err) {
-    error.value = err?.data?.statusMessage || err?.message || 'Save failed'
+    const msg = err?.data?.statusMessage || err?.message || 'Save failed'
+    applyOutput('', '', msg)
+    error.value = msg
+    return false
   }
   finally {
     saving.value = false
+    if (editorBusyMode.value === 'save') editorBusyMode.value = null
+  }
+}
+
+/**
+ * @param {'test'|'run'} mode
+ */
+async function runFromEditor(mode) {
+  if (editorBusy.value) return
+  editorError.value = ''
+  editorNotice.value = ''
+
+  flushEditorState()
+  await nextTick()
+
+  const needsSave = !editingId.value || currentSnapshot() !== savedSnapshot.value
+  if (needsSave) {
+    const ok = await appConfirm({
+      title: 'Save before continuing?',
+      message: !editingId.value
+        ? `Save this new source before ${mode === 'test' ? 'testing' : 'running'}?`
+        : `You have unsaved changes. Save before ${mode === 'test' ? 'testing' : 'running'}?`,
+      confirmLabel: 'Save & continue',
+    })
+    if (!ok) return
+    editorBusyMode.value = 'save'
+    await nextTick()
+    const saved = await saveSource({ close: false })
+    if (!saved) return
+  }
+
+  if (!editingId.value) {
+    editorError.value = 'Save the source before testing or running'
+    return
+  }
+
+  // Immediate busy feedback before the network call
+  editorBusyMode.value = mode
+  applyOutput(mode === 'test' ? 'Testing…' : 'Running…', '')
+  await nextTick()
+
+  try {
+    const res = await authedFetch(`/api/data-sources/${editingId.value}/run`, {
+      method: 'POST',
+      body: {
+        organizationId: activeOrganization.value.id,
+        mode,
+      },
+    })
+    const formatted = formatRunResult(res, mode)
+    applyOutput(formatted.summary, formatted.body)
+    notice.value = formatted.summary
+    const retrieveStep = Array.isArray(res.pipelineSteps)
+      ? res.pipelineSteps.find((s) => s.type === 'retrieve')
+      : null
+    if (retrieveStep?.sample?.[0]) {
+      retrieveSample.value = retrieveStep.sample[0]
+    }
+    else if (Array.isArray(res.sample) && res.sample[0]) {
+      retrieveSample.value = res.sample[0]
+    }
+  }
+  catch (err) {
+    const msg = err?.data?.statusMessage || err?.message || 'Run failed'
+    applyOutput('', '', msg)
+    error.value = msg
+  }
+  finally {
+    editorBusyMode.value = null
   }
 }
 
@@ -445,9 +852,12 @@ async function saveSource() {
  * @param {'test'|'run'} mode
  */
 async function runSource(row, mode) {
+  if (busyId.value) return
   busyId.value = row.id
+  busyMode.value = mode
   error.value = ''
-  notice.value = ''
+  notice.value = mode === 'test' ? 'Testing…' : 'Running…'
+  await nextTick()
   try {
     const res = await authedFetch(`/api/data-sources/${row.id}/run`, {
       method: 'POST',
@@ -456,21 +866,17 @@ async function runSource(row, mode) {
         mode,
       },
     })
-    if (mode === 'test') {
-      const preview = JSON.stringify(res.sample || [], null, 2).slice(0, 800)
-      notice.value = `Test OK — fetched ${res.rowsFetched} row(s). Preview:\n${preview}`
-    }
-    else {
-      notice.value = `Run OK — wrote ${res.rowsWritten} row(s) to ${res.physicalTable || res.destinationTable}.`
-    }
+    notice.value = formatRunResult(res, mode).summary
     await load()
   }
   catch (err) {
     await load()
     error.value = err?.data?.statusMessage || err?.message || 'Run failed'
+    notice.value = ''
   }
   finally {
     busyId.value = null
+    busyMode.value = null
   }
 }
 
@@ -478,7 +884,13 @@ async function runSource(row, mode) {
  * @param {Record<string, unknown>} row
  */
 async function removeSource(row) {
-  if (!confirm(`Delete source “${row.name}”?`)) return
+  const ok = await appConfirm({
+    title: 'Delete source?',
+    message: `Delete source “${row.name}”? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  })
+  if (!ok) return
   busyId.value = row.id
   error.value = ''
   try {
