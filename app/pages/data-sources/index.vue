@@ -2,12 +2,11 @@
   <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
     <div>
       <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-        Administration
+        Data Sources
       </h1>
-      <p class="mt-2 text-[var(--mute)]">
-        Manage organizations, users, and roles for
+      <p class="mt-2 max-w-2xl text-[var(--mute)]">
+        Connector types, shared connections, and ingest sources for
         <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'the active organization' }}</span>.
-        MFA-verified session required.
       </p>
     </div>
 
@@ -35,28 +34,28 @@ definePageMeta({
   middleware: ['auth', 'admin'],
 })
 
-useHead({ title: 'Administration' })
+useHead({ title: 'Data Sources' })
 
 const { activeOrganization } = useOrganization()
 const { allowsRoles } = usePermissions()
 
 const allCards = [
   {
-    label: 'Organizations',
-    to: '/platform/organizations',
-    description: 'Create organizations, set MFA mode, and choose the active org (platform only).',
+    label: 'Connector Type',
+    to: '/data-sources/connector-types',
+    description: 'Platform catalog of source blueprints. Enable types or generate new ones with AI.',
     roles: ['platform'],
   },
   {
-    label: 'Users',
-    to: '/administration/users',
-    description: 'Invite by email, create users with a reset link, edit membership and role assignments.',
+    label: 'Connections',
+    to: '/data-sources/connections',
+    description: 'Shared authenticated links. Credentials are defined once and reused by many sources.',
     roles: ['platform', 'orgAdmin'],
   },
   {
-    label: 'Roles',
-    to: '/administration/roles',
-    description: 'Add and edit organization roles. Users may belong to one or more roles.',
+    label: 'Sources',
+    to: '/data-sources/sources',
+    description: 'Endpoint ingest jobs with Retrieve → Filter → Transform → Ingest pipelines.',
     roles: ['platform', 'orgAdmin'],
   },
 ]

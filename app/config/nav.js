@@ -8,7 +8,7 @@
  * (regardless of position in this array). Prefer keeping it last here too.
  *
  * @typedef {{ id: string, label: string, to: string, roles?: Array<'platform'|'orgAdmin'> }} NavItem
- * @typedef {{ id: string, label: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
+ * @typedef {{ id: string, label: string, to?: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
  */
 
 /** @type {NavGroup[]} */
@@ -32,6 +32,7 @@ export const appNavGroups = [
   {
     id: 'data-sources',
     label: 'Data Sources',
+    to: '/data-sources',
     roles: ['platform', 'orgAdmin'],
     children: [
       {
@@ -57,6 +58,7 @@ export const appNavGroups = [
   {
     id: 'administration',
     label: 'Administration',
+    to: '/administration',
     roles: ['platform', 'orgAdmin'],
     children: [
       {

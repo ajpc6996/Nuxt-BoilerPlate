@@ -1,25 +1,36 @@
 <template>
   <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-          Connections
-        </h1>
-        <p class="mt-2 max-w-2xl text-[var(--mute)]">
-          Shared authenticated links to external systems. Credentials are defined once and reused by many sources.
-          Active org:
-          <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
-        </p>
-      </div>
+    <div>
+      <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
+        Connections
+      </h1>
+      <p class="mt-2 max-w-2xl text-[var(--mute)]">
+        Shared authenticated links to external systems. Credentials are defined once and reused by many sources.
+        Active org:
+        <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
+      </p>
+    </div>
+
+    <AppListToolbar>
+      <AppListFilter
+        v-model="listFilter"
+        placeholder="Filter connections…"
+      />
       <button
         type="button"
         class="btn-primary !px-4 !py-2"
         :disabled="!activeOrganization?.id"
         @click="openCreate"
       >
-        New connection
+        Add
       </button>
-    </div>
+      <NuxtLink
+        to="/data-sources"
+        class="btn-secondary !px-4 !py-2"
+      >
+        Back
+      </NuxtLink>
+    </AppListToolbar>
 
     <p
       v-if="!activeOrganization?.id"
@@ -64,7 +75,7 @@
         </thead>
         <tbody>
           <tr
-            v-for="row in items"
+            v-for="row in filteredItems"
             :key="row.id"
             class="border-b border-[var(--border-soft)]"
           >
@@ -106,12 +117,12 @@
               </div>
             </td>
           </tr>
-          <tr v-if="!items.length">
+          <tr v-if="!filteredItems.length">
             <td
               colspan="4"
               class="px-3 py-8 text-center text-[var(--mute)]"
             >
-              No connections yet. Create one, then add sources that reuse it.
+              {{ items.length ? 'No connections match this filter.' : 'No connections yet. Create one, then add sources that reuse it.' }}
             </td>
           </tr>
         </tbody>
@@ -219,6 +230,7 @@ const authedFetch = useAuthedFetch()
 const { confirm: appConfirm } = useAppConfirm()
 
 const items = ref([])
+const listFilter = ref('')
 const catalog = ref([])
 const pending = ref(false)
 const error = ref('')
@@ -239,6 +251,20 @@ const form = reactive({
 const selectedType = computed(() =>
   catalog.value.find((t) => t.id === form.connectorTypeId) || null,
 )
+
+const filteredItems = computed(() => {
+  const q = listFilter.value.trim().toLowerCase()
+  if (!q) return items.value
+  return items.value.filter((row) => {
+    const hay = [
+      row.name,
+      row.status,
+      row.connector_types?.name,
+      row.connector_types?.key,
+    ].map((v) => String(v || '').toLowerCase()).join(' ')
+    return hay.includes(q)
+  })
+})
 
 const hasCredentialFields = computed(() =>
   Boolean(Object.keys(selectedType.value?.credential_schema?.properties || {}).length),

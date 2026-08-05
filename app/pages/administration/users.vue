@@ -1,18 +1,41 @@
 <template>
-  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-12 lg:px-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Users</h1>
-        <p class="mt-2 text-sm text-[var(--mute)]">
-          Organization:
-          <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || '—' }}</span>
-        </p>
-      </div>
-      <NuxtLink to="/administration" class="btn-secondary !px-4 !py-2">Back</NuxtLink>
+  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
+    <div>
+      <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Users</h1>
+      <p class="mt-2 text-sm text-[var(--mute)]">
+        Organization:
+        <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || '—' }}</span>
+      </p>
     </div>
 
-    <div class="mt-8 grid gap-6 lg:grid-cols-2">
-      <form class="panel flex flex-col gap-3 p-5" @submit.prevent="inviteUser">
+    <AppListToolbar>
+      <AppListFilter
+        v-model="listFilter"
+        placeholder="Filter users…"
+      />
+      <button
+        type="button"
+        class="btn-primary !px-4 !py-2"
+        @click="showAdd = !showAdd"
+      >
+        {{ showAdd ? 'Close' : 'Add' }}
+      </button>
+      <NuxtLink
+        to="/administration"
+        class="btn-secondary !px-4 !py-2"
+      >
+        Back
+      </NuxtLink>
+    </AppListToolbar>
+
+    <div
+      v-if="showAdd"
+      class="mt-8 grid gap-6 lg:grid-cols-2"
+    >
+      <form
+        class="panel flex flex-col gap-3 p-5"
+        @submit.prevent="inviteUser"
+      >
         <h2 class="font-display text-lg font-semibold text-[var(--ink)]">Invite by email</h2>
         <input
           v-model="inviteEmail"
@@ -21,12 +44,19 @@
           placeholder="user@example.com"
           class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
         >
-        <button type="submit" class="btn-primary !px-4 !py-2" :disabled="busy">
+        <button
+          type="submit"
+          class="btn-primary !px-4 !py-2"
+          :disabled="busy"
+        >
           Send invite
         </button>
       </form>
 
-      <form class="panel flex flex-col gap-3 p-5" @submit.prevent="createUser">
+      <form
+        class="panel flex flex-col gap-3 p-5"
+        @submit.prevent="createUser"
+      >
         <h2 class="font-display text-lg font-semibold text-[var(--ink)]">Create user + reset link</h2>
         <input
           v-model="createEmail"
@@ -41,14 +71,28 @@
           placeholder="Full name"
           class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
         >
-        <button type="submit" class="btn-primary !px-4 !py-2" :disabled="busy">
+        <button
+          type="submit"
+          class="btn-primary !px-4 !py-2"
+          :disabled="busy"
+        >
           Create & email reset
         </button>
       </form>
     </div>
 
-    <p v-if="notice" class="mt-4 text-sm text-[var(--accent-ink)]">{{ notice }}</p>
-    <p v-if="errorMessage" class="mt-2 text-sm text-[var(--danger)]">{{ errorMessage }}</p>
+    <p
+      v-if="notice"
+      class="mt-4 text-sm text-[var(--accent-ink)]"
+    >
+      {{ notice }}
+    </p>
+    <p
+      v-if="errorMessage"
+      class="mt-2 text-sm text-[var(--danger)]"
+    >
+      {{ errorMessage }}
+    </p>
 
     <div class="panel mt-8 overflow-x-auto">
       <table class="min-w-full text-left text-sm">
@@ -63,7 +107,7 @@
         </thead>
         <tbody>
           <tr
-            v-for="row in members"
+            v-for="row in filteredMembers"
             :key="row.id"
             class="border-b border-[var(--border-soft)]"
           >
@@ -106,6 +150,14 @@
               </button>
             </td>
           </tr>
+          <tr v-if="!filteredMembers.length">
+            <td
+              colspan="5"
+              class="px-4 py-8 text-center text-[var(--mute)]"
+            >
+              {{ members.length ? 'No users match this filter.' : 'No users yet.' }}
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -125,6 +177,8 @@ const authedFetch = useAuthedFetch()
 const { activeOrganizationId, activeOrganization } = useOrganization()
 
 const members = ref([])
+const listFilter = ref('')
+const showAdd = ref(false)
 const roles = ref([])
 const assignments = ref([])
 const inviteEmail = ref('')
@@ -133,6 +187,24 @@ const createName = ref('')
 const busy = ref(false)
 const notice = ref('')
 const errorMessage = ref('')
+
+const filteredMembers = computed(() => {
+  const q = listFilter.value.trim().toLowerCase()
+  if (!q) return members.value
+  return members.value.filter((row) => {
+    const roleNames = roles.value
+      .filter((r) => hasRole(row.user_id, r.id))
+      .map((r) => r.name)
+      .join(' ')
+    const hay = [
+      row.profiles?.full_name,
+      row.profiles?.email,
+      row.status,
+      roleNames,
+    ].map((v) => String(v || '').toLowerCase()).join(' ')
+    return hay.includes(q)
+  })
+})
 
 const load = async () => {
   const orgId = activeOrganizationId.value
@@ -184,10 +256,13 @@ const inviteUser = async () => {
     })
     notice.value = `Invite sent to ${inviteEmail.value}`
     inviteEmail.value = ''
+    showAdd.value = false
     await load()
-  } catch (err) {
+  }
+  catch (err) {
     errorMessage.value = err?.data?.statusMessage || err.message
-  } finally {
+  }
+  finally {
     busy.value = false
   }
 }
@@ -208,10 +283,13 @@ const createUser = async () => {
     notice.value = `User created; password reset email sent to ${createEmail.value}`
     createEmail.value = ''
     createName.value = ''
+    showAdd.value = false
     await load()
-  } catch (err) {
+  }
+  catch (err) {
     errorMessage.value = err?.data?.statusMessage || err.message
-  } finally {
+  }
+  finally {
     busy.value = false
   }
 }
@@ -239,7 +317,8 @@ const toggleRole = async (userId, roleId, enabled) => {
       role_id: roleId,
     })
     if (error) errorMessage.value = error.message
-  } else {
+  }
+  else {
     const { error } = await supabase
       .from('user_roles')
       .delete()
@@ -264,7 +343,8 @@ const sendReset = async (email) => {
       },
     })
     notice.value = `Password reset email sent to ${email}`
-  } catch (err) {
+  }
+  catch (err) {
     errorMessage.value = err?.data?.statusMessage || err.message
   }
 }

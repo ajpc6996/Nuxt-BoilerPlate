@@ -55,24 +55,38 @@
         :key="group.id"
         class="mb-3"
       >
-        <button
+        <div
           v-if="!railCollapsed"
-          type="button"
-          class="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--mute-soft)] hover:text-[var(--accent-ink)]"
-          @click="toggleGroup(group.id)"
+          class="flex w-full items-center gap-0.5"
         >
-          <span>{{ group.label }}</span>
-          <svg
-            class="h-3.5 w-3.5 transition-transform"
-            :class="isGroupOpen(group.id) ? 'rotate-90' : ''"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            aria-hidden="true"
+          <button
+            type="button"
+            class="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--mute-soft)] hover:text-[var(--accent-ink)]"
+            :title="group.to ? `Open ${group.label}` : group.label"
+            @click="onGroupLabelClick(group)"
+            @dblclick.prevent="onGroupToggle(group)"
           >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
+            <span class="truncate">{{ group.label }}</span>
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--mute-soft)] hover:bg-[var(--accent-soft)]/50 hover:text-[var(--accent-ink)]"
+            :title="isGroupOpen(group.id) ? 'Collapse' : 'Expand'"
+            :aria-expanded="isGroupOpen(group.id)"
+            @click.stop="onGroupToggle(group)"
+          >
+            <svg
+              class="h-3.5 w-3.5 transition-transform"
+              :class="isGroupOpen(group.id) ? 'rotate-90' : ''"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
         <p
           v-else
           class="px-1 pb-1 text-center text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--mute-soft)]"
@@ -124,11 +138,15 @@ const {
   toggleCollapsed,
   isGroupOpen,
   toggleGroup,
+  openGroupHub,
   setCollapsed,
 } = useAppNav()
 
 /** Collapsed narrow rail vs full labels */
 const railCollapsed = computed(() => collapsed.value)
+
+/** @type {ReturnType<typeof setTimeout> | null} */
+let labelClickTimer = null
 
 const isActive = (to) => {
   if (to === '/') return route.path === '/'
@@ -140,5 +158,34 @@ const onNavigate = () => {
   if (import.meta.client && window.innerWidth < 1024 && !pinned.value) {
     setCollapsed(true)
   }
+}
+
+/**
+ * Single click → hub. Double-click is handled separately (expand/collapse).
+ * @param {{ id: string, to?: string, label?: string }} group
+ */
+function onGroupLabelClick(group) {
+  if (labelClickTimer) {
+    clearTimeout(labelClickTimer)
+    labelClickTimer = null
+    return
+  }
+  labelClickTimer = setTimeout(async () => {
+    labelClickTimer = null
+    await openGroupHub(group)
+    onNavigate()
+  }, 250)
+}
+
+/**
+ * Arrow click or label double-click → expand / collapse only.
+ * @param {{ id: string }} group
+ */
+function onGroupToggle(group) {
+  if (labelClickTimer) {
+    clearTimeout(labelClickTimer)
+    labelClickTimer = null
+  }
+  toggleGroup(group.id)
 }
 </script>

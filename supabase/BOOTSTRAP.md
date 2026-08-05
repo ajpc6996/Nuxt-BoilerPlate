@@ -139,13 +139,21 @@ On a source, enable **Expand URL from ingest table**, set a path like
 A run issues one request per distinct value set (capped; test mode uses up to 3) and unions rows into the destination.
 Credentials still come from the linked **connection**.
 
-### Pipeline (Filter)
+### Pipeline (Filter + Transform)
 
 Apply `20260805120000_data_source_pipeline.sql`.
 
-Each Source has a canvas: **Retrieve → (Filter) → Ingest**.
+Each Source has a canvas: **Retrieve → (Filter | Transform)* → Ingest**.
 
-- Drag **Filter** onto the canvas, connect Retrieve → Filter → Ingest
-- Filter: keep flat fields + AND rules (`eq`, `neq`, `contains`, `not_contains`)
-- **Test** never writes; returns retrieved vs kept counts (+ step samples when **Detailed debugging** is on)
-- **Run** writes only the filtered rows to `ingest.<destination>`
+- Drag **Filter** / **Transform** onto the canvas and link left-to-right
+- **Filter**: keep flat fields + AND rules (`eq`, `neq`, `contains`, `not_contains`)
+- **Transform**: ordered field actions (does not drop rows)
+  - Trim (`start` / `end` / `both` / `remove_spaces` — UI “All spaces” strips every space)
+  - Case value transform (`camel`, `pascal`, `snake`, `kebab`, `lower`, `upper`) + optional rename
+  - Join fields, split → array, array → string, regex replace
+  - Rename / copy / drop, cast, default/fill null
+  - **v1.1:** template (`{field}` / `${field}`), conditional set, value map, date format
+  - Paste sample JSON or **Load from parent** (first object after upstream operators)
+- Canvas **Auto layout** aligns nodes by chain depth; default zoom is 75%
+- **Test** never writes; returns retrieved vs kept counts (+ step samples)
+- **Run** writes pipeline output to `ingest.<destination>`

@@ -13,6 +13,22 @@
       >
         + Filter
       </button>
+      <button
+        type="button"
+        class="rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)] hover:border-[var(--accent)]"
+        draggable="true"
+        @dragstart="onPaletteDrag($event, 'transform')"
+        @click="addTransformNode()"
+      >
+        + Transform
+      </button>
+      <button
+        type="button"
+        class="rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)] hover:border-[var(--accent)]"
+        @click="autoLayout"
+      >
+        Auto layout
+      </button>
       <label class="ml-auto flex items-center gap-2 text-xs text-[var(--ink)]">
         <input
           v-model="debugEnabled"
@@ -41,18 +57,24 @@
         @drop.prevent="onCanvasDrop"
       >
         <VueFlow
+          id="source-pipeline-canvas"
           v-model:nodes="nodes"
           v-model:edges="edges"
           :node-types="nodeTypes"
           :default-edge-options="defaultEdgeOptions"
+          :default-viewport="defaultViewport"
+          :min-zoom="0.2"
+          :max-zoom="2"
           :nodes-connectable="true"
           :elements-selectable="true"
           :edges-updatable="true"
           :delete-key-code="['Backspace', 'Delete']"
           :connection-mode="ConnectionMode.Loose"
           :is-valid-connection="isValidConnection"
-          fit-view-on-init
+          :fit-view-on-init="false"
           class="source-pipeline-flow h-full w-full"
+          @init="onFlowInit"
+          @nodes-initialized="onNodesInitialized"
           @connect="onConnect"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
@@ -95,8 +117,10 @@
             name="node-config"
             :node="selectedNode"
             :close="closeConfig"
-            :update-filter="patchSelectedFilter"
-            :remove-filter="removeSelectedFilter"
+            :update-filter="patchSelectedOperator"
+            :remove-filter="removeSelectedOperator"
+            :update-transform="patchSelectedOperator"
+            :remove-transform="removeSelectedOperator"
           />
         </div>
       </aside>
@@ -122,9 +146,19 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
 import { createDefaultPipeline, normalizePipeline } from '~~/shared/pipelineDefaults.js'
+import { layoutPipelineNodes } from '~~/shared/pipelineLayout.js'
 import RetrieveNode from '~/components/pipeline/RetrieveNode.vue'
 import FilterNode from '~/components/pipeline/FilterNode.vue'
+import TransformNode from '~/components/pipeline/TransformNode.vue'
 import IngestNode from '~/components/pipeline/IngestNode.vue'
+
+const FLOW_ID = 'source-pipeline-canvas'
+/** Default zoom is 75% of Vue Flow's usual 1.0. */
+const DEFAULT_ZOOM = 0.75
+const defaultViewport = { x: 0, y: 0, zoom: DEFAULT_ZOOM }
+
+/** @type {null | ((opts?: Record<string, unknown>) => void)} */
+let fitViewFn = null
 
 const props = defineProps({
   modelValue: {
@@ -142,6 +176,7 @@ const emit = defineEmits(['update:modelValue', 'edit-node'])
 const nodeTypes = {
   retrieve: markRaw(RetrieveNode),
   filter: markRaw(FilterNode),
+  transform: markRaw(TransformNode),
   ingest: markRaw(IngestNode),
 }
 
@@ -172,6 +207,7 @@ const configTitle = computed(() => {
   const t = selectedNode.value?.type
   if (t === 'retrieve') return 'Retrieve'
   if (t === 'filter') return 'Filter'
+  if (t === 'transform') return 'Transform'
   if (t === 'ingest') return 'Ingest'
   return 'Configure'
 })
@@ -321,8 +357,8 @@ function onConnect(params) {
 
   const targetType = nodes.value.find((n) => n.id === params.target)?.type
   let next = [...edges.value]
-  // Filter / Ingest accept a single inbound edge
-  if (targetType === 'filter' || targetType === 'ingest') {
+  // Mid-chain / Ingest accept a single inbound edge
+  if (targetType === 'filter' || targetType === 'transform' || targetType === 'ingest') {
     next = next.filter((e) => e.target !== params.target)
   }
   // Retrieve typically feeds one primary chain; allow multiple filters later — keep all outbound
@@ -400,7 +436,7 @@ function addFilterNode(position) {
     ? position
     : {
         x: 280,
-        y: 140 + nodes.value.filter((n) => n.type === 'filter').length * 80,
+        y: 80 + nodes.value.filter((n) => n.type === 'filter' || n.type === 'transform').length * 90,
       }
   nodes.value = [
     ...nodes.value,
@@ -418,22 +454,50 @@ function addFilterNode(position) {
 }
 
 /**
+ * @param {{ x?: number, y?: number }} [position]
+ */
+function addTransformNode(position) {
+  const id = `transform_${Date.now().toString(36)}`
+  const pos = position && typeof position.x === 'number'
+    ? position
+    : {
+        x: 280,
+        y: 80 + nodes.value.filter((n) => n.type === 'filter' || n.type === 'transform').length * 90,
+      }
+  nodes.value = [
+    ...nodes.value,
+    {
+      id,
+      type: 'transform',
+      position: pos,
+      connectable: true,
+      data: { label: 'Transform', actions: [] },
+    },
+  ]
+  selectedNodeId.value = id
+  configOpen.value = true
+  emitPipeline()
+}
+
+/**
  * @param {DragEvent} event
  */
 function onCanvasDrop(event) {
   const type = event.dataTransfer?.getData('application/pipeline-node')
-  if (type !== 'filter') return
+  if (type !== 'filter' && type !== 'transform') return
   const bounds = event.currentTarget.getBoundingClientRect()
-  addFilterNode({
+  const pos = {
     x: Math.max(40, event.clientX - bounds.left - 80),
     y: Math.max(40, event.clientY - bounds.top - 30),
-  })
+  }
+  if (type === 'transform') addTransformNode(pos)
+  else addFilterNode(pos)
 }
 
 /**
  * @param {Record<string, unknown>} data
  */
-function patchSelectedFilter(data) {
+function patchSelectedOperator(data) {
   if (!selectedNodeId.value) return
   nodes.value = nodes.value.map((n) => {
     if (n.id !== selectedNodeId.value) return n
@@ -442,15 +506,57 @@ function patchSelectedFilter(data) {
   emitPipeline()
 }
 
-function removeSelectedFilter() {
+function removeSelectedOperator() {
   const id = selectedNodeId.value
   if (!id) return
   const node = nodes.value.find((n) => n.id === id)
-  if (!node || node.type !== 'filter') return
+  if (!node || (node.type !== 'filter' && node.type !== 'transform')) return
   nodes.value = nodes.value.filter((n) => n.id !== id)
   edges.value = edges.value.filter((e) => e.source !== id && e.target !== id)
   closeConfig()
   emitPipeline()
+}
+
+function fitToScreen(duration = 200) {
+  nextTick(() => {
+    // Same behavior as the Controls “fit view” control (below zoom ±).
+    fitViewFn?.({
+      padding: 0.2,
+      includeHiddenNodes: false,
+      duration,
+    })
+  })
+}
+
+/**
+ * @param {import('@vue-flow/core').VueFlowStore} instance
+ */
+function onFlowInit(instance) {
+  fitViewFn = instance.fitView?.bind(instance) || null
+}
+
+let didInitialFit = false
+function onNodesInitialized() {
+  if (didInitialFit) return
+  didInitialFit = true
+  fitToScreen(0)
+}
+
+function autoLayout() {
+  const laidOut = layoutPipelineNodes(nodes.value, edges.value)
+  if (!laidOut.length) return
+  const byId = Object.fromEntries(laidOut.map((p) => [p.id, p.position]))
+  nodes.value = nodes.value.map((n) => ({
+    ...n,
+    position: byId[n.id] ? { ...byId[n.id] } : { ...n.position },
+  }))
+  emitPipeline()
+  fitToScreen(200)
+}
+
+function resetViewFit() {
+  didInitialFit = false
+  fitToScreen(0)
 }
 
 defineExpose({
@@ -462,6 +568,9 @@ defineExpose({
     selectedNodeId.value = nodeId
     configOpen.value = true
   },
+  autoLayout,
+  fitToScreen,
+  resetViewFit,
 })
 </script>
 

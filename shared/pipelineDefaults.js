@@ -69,3 +69,43 @@ export function normalizePipeline(raw) {
 }
 
 export const FILTER_OPS = ['eq', 'neq', 'contains', 'not_contains']
+
+/** Stored trim mode ids (UI may label remove_spaces as “All spaces”). */
+export const TRIM_MODES = ['start', 'end', 'both', 'remove_spaces']
+
+export const CASE_STYLES = ['camel', 'snake', 'kebab', 'pascal', 'lower', 'upper']
+
+export const TRANSFORM_OPS = [
+  'trim',
+  'case',
+  'join',
+  'split',
+  'join_array',
+  'regex',
+  'rename',
+  'copy',
+  'drop',
+  'cast',
+  'default',
+  'template',
+  'conditional',
+  'map',
+  'date_format',
+]
+
+export const CAST_TYPES = ['string', 'number', 'boolean', 'date']
+
+export const DEFAULT_WHENS = ['null', 'empty', 'null_or_empty']
+
+export const CONDITIONAL_OPS = ['eq', 'neq', 'contains', 'not_contains', 'empty', 'not_empty']
+
+export const DATE_FORMATS = [
+  'iso',
+  'date',
+  'datetime',
+  'YYYY-MM-DD',
+  'DD/MM/YYYY',
+  'MM/DD/YYYY',
+]
+
+export const MAP_FALLBACKS = ['keep', 'null', 'value']

@@ -68,6 +68,9 @@ const toneClass = computed(() => {
   if (props.tone === 'filter') {
     return 'border-[var(--border)] bg-[var(--surface-raised)]'
   }
+  if (props.tone === 'transform') {
+    return 'border-violet-500/40 bg-violet-500/10'
+  }
   return 'border-[var(--border)] bg-[var(--surface-raised)]'
 })
 </script>

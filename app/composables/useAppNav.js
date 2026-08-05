@@ -116,11 +116,24 @@ export function useAppNav() {
     return Boolean(openGroups.value[groupId])
   }
 
-  function toggleGroup(groupId) {
+  function setGroupOpen(groupId, open) {
     openGroups.value = {
       ...openGroups.value,
-      [groupId]: !isGroupOpen(groupId),
+      [groupId]: Boolean(open),
     }
+  }
+
+  function toggleGroup(groupId) {
+    setGroupOpen(groupId, !isGroupOpen(groupId))
+  }
+
+  /**
+   * Open the group hub page (same targets as Back). Does not toggle expand.
+   * @param {{ id: string, to?: string }} group
+   */
+  async function openGroupHub(group) {
+    if (!group?.to) return
+    await navigateTo(group.to)
   }
 
   return {
@@ -135,5 +148,7 @@ export function useAppNav() {
     setCollapsed,
     isGroupOpen,
     toggleGroup,
+    setGroupOpen,
+    openGroupHub,
   }
 }

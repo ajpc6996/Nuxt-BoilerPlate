@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-12 lg:px-8">
+  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
     <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Platform</h1>
     <p class="mt-2 text-[var(--mute)]">
       Cross-tenant configuration. MFA is required for all platform actions.

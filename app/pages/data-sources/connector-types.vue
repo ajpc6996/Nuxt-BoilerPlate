@@ -1,22 +1,33 @@
 <template>
   <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-          Connector types
-        </h1>
-        <p class="mt-2 max-w-2xl text-[var(--mute)]">
-          Platform catalog of source blueprints. Define schemas manually or generate a draft with an LLM, then review before publishing.
-        </p>
-      </div>
+    <div>
+      <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
+        Connector types
+      </h1>
+      <p class="mt-2 max-w-2xl text-[var(--mute)]">
+        Platform catalog of source blueprints. Define schemas manually or generate a draft with an LLM, then review before publishing.
+      </p>
+    </div>
+
+    <AppListToolbar>
+      <AppListFilter
+        v-model="listFilter"
+        placeholder="Filter connector types…"
+      />
       <button
         type="button"
         class="btn-primary !px-4 !py-2"
         @click="openGenerate"
       >
-        Generate with AI
+        Add
       </button>
-    </div>
+      <NuxtLink
+        to="/data-sources"
+        class="btn-secondary !px-4 !py-2"
+      >
+        Back
+      </NuxtLink>
+    </AppListToolbar>
 
     <p
       v-if="error"
@@ -41,72 +52,82 @@
 
     <div
       v-else
-      class="mt-8 space-y-4"
+      class="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
     >
       <article
-        v-for="item in items"
+        v-for="item in filteredItems"
         :key="item.id"
-        class="panel px-5 py-4"
+        class="panel flex flex-col px-3 py-3"
       >
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 class="font-display text-lg font-semibold text-[var(--ink)]">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <h2 class="truncate font-display text-base font-semibold text-[var(--ink)]">
               {{ item.name }}
             </h2>
-            <p class="mt-1 text-sm text-[var(--mute)]">
-              <span class="font-mono text-[var(--accent-ink)]">{{ item.key }}</span>
-              · {{ item.category }} · auth {{ item.auth_mode }} · runner
-              <span class="font-mono">{{ item.runner_key }}</span>
+            <p class="mt-0.5 truncate font-mono text-[10px] text-[var(--accent-ink)]">
+              {{ item.key }}
+            </p>
+            <p class="mt-1 text-[11px] text-[var(--mute)]">
+              {{ item.category }} · {{ item.auth_mode }}
               <span
                 v-if="!item.is_system"
-                class="ml-2 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs"
+                class="ml-1 rounded bg-[var(--accent-soft)] px-1 py-0.5 text-[10px]"
               >custom</span>
             </p>
-            <p
-              v-if="item.description"
-              class="mt-2 text-sm text-[var(--mute)]"
-            >
-              {{ item.description }}
-            </p>
           </div>
-          <label class="inline-flex items-center gap-2 text-sm text-[var(--ink)]">
+          <label class="inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--ink)]">
             <input
               type="checkbox"
-              class="h-4 w-4 accent-[var(--accent)]"
+              class="h-3.5 w-3.5 accent-[var(--accent)]"
               :checked="item.is_enabled"
               :disabled="savingId === item.id"
               @change="toggleEnabled(item, $event.target.checked)"
             >
-            Enabled
+            On
           </label>
         </div>
-        <details class="mt-3">
-          <summary class="cursor-pointer text-sm text-[var(--accent-ink)]">
-            View schemas
+        <p
+          v-if="item.description"
+          class="mt-2 line-clamp-2 text-xs text-[var(--mute)]"
+        >
+          {{ item.description }}
+        </p>
+        <p class="mt-2 font-mono text-[10px] text-[var(--mute-soft)]">
+          {{ item.runner_key }}
+        </p>
+        <details class="mt-2">
+          <summary class="cursor-pointer text-xs text-[var(--accent-ink)]">
+            Schemas
           </summary>
-          <div class="mt-2 grid gap-3 lg:grid-cols-3">
+          <div class="mt-2 space-y-2">
             <div>
-              <p class="mb-1 text-xs font-medium text-[var(--mute)]">Connection</p>
-              <pre class="overflow-auto rounded-md bg-[var(--surface)] p-3 text-xs text-[var(--mute)]">{{ pretty(item.connection_schema) }}</pre>
+              <p class="mb-0.5 text-[10px] font-medium text-[var(--mute)]">Connection</p>
+              <pre class="max-h-28 overflow-auto rounded-md bg-[var(--surface)] p-2 text-[10px] text-[var(--mute)]">{{ pretty(item.connection_schema) }}</pre>
             </div>
             <div>
-              <p class="mb-1 text-xs font-medium text-[var(--mute)]">Source config</p>
-              <pre class="overflow-auto rounded-md bg-[var(--surface)] p-3 text-xs text-[var(--mute)]">{{ pretty(item.config_schema) }}</pre>
+              <p class="mb-0.5 text-[10px] font-medium text-[var(--mute)]">Source</p>
+              <pre class="max-h-28 overflow-auto rounded-md bg-[var(--surface)] p-2 text-[10px] text-[var(--mute)]">{{ pretty(item.config_schema) }}</pre>
             </div>
             <div>
-              <p class="mb-1 text-xs font-medium text-[var(--mute)]">Credentials</p>
-              <pre class="overflow-auto rounded-md bg-[var(--surface)] p-3 text-xs text-[var(--mute)]">{{ pretty(item.credential_schema) }}</pre>
+              <p class="mb-0.5 text-[10px] font-medium text-[var(--mute)]">Credentials</p>
+              <pre class="max-h-28 overflow-auto rounded-md bg-[var(--surface)] p-2 text-[10px] text-[var(--mute)]">{{ pretty(item.credential_schema) }}</pre>
             </div>
           </div>
           <p
             v-if="item.generation_notes"
-            class="mt-3 text-sm text-[var(--mute)]"
+            class="mt-2 text-xs text-[var(--mute)]"
           >
             <span class="font-medium text-[var(--ink)]">Notes:</span>
             {{ item.generation_notes }}
           </p>
         </details>
       </article>
+      <p
+        v-if="!filteredItems.length"
+        class="col-span-full py-8 text-center text-sm text-[var(--mute)]"
+      >
+        {{ items.length ? 'No connector types match this filter.' : 'No connector types yet.' }}
+      </p>
     </div>
 
     <div
@@ -252,6 +273,7 @@ useHead({ title: 'Connector types' })
 
 const authedFetch = useAuthedFetch()
 const items = ref([])
+const listFilter = ref('')
 const pending = ref(true)
 const error = ref('')
 const notice = ref('')
@@ -260,6 +282,22 @@ const wizardOpen = ref(false)
 const generating = ref(false)
 const saving = ref(false)
 const proposed = ref(null)
+
+const filteredItems = computed(() => {
+  const q = listFilter.value.trim().toLowerCase()
+  if (!q) return items.value
+  return items.value.filter((item) => {
+    const hay = [
+      item.name,
+      item.key,
+      item.category,
+      item.auth_mode,
+      item.runner_key,
+      item.description,
+    ].map((v) => String(v || '').toLowerCase()).join(' ')
+    return hay.includes(q)
+  })
+})
 
 const gen = reactive({
   description: '',

@@ -1,16 +1,37 @@
 <template>
-  <div class="mx-auto w-full max-w-4xl flex-1 px-6 py-12 lg:px-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Organizations</h1>
-        <p class="mt-2 text-sm text-[var(--mute)]">
-          Platform only. Creating an org adds you as an active member with the Admin role.
-        </p>
-      </div>
-      <NuxtLink to="/platform" class="btn-secondary !px-4 !py-2">Back</NuxtLink>
+  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
+    <div>
+      <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Organizations</h1>
+      <p class="mt-2 text-sm text-[var(--mute)]">
+        Platform only. Creating an org adds you as an active member with the Admin role.
+      </p>
     </div>
 
-    <form class="panel mt-8 grid gap-3 p-5 sm:grid-cols-3" @submit.prevent="createOrg">
+    <AppListToolbar>
+      <AppListFilter
+        v-model="listFilter"
+        placeholder="Filter organizations…"
+      />
+      <button
+        type="button"
+        class="btn-primary !px-4 !py-2"
+        @click="showAdd = !showAdd"
+      >
+        {{ showAdd ? 'Close' : 'Add' }}
+      </button>
+      <NuxtLink
+        to="/administration"
+        class="btn-secondary !px-4 !py-2"
+      >
+        Back
+      </NuxtLink>
+    </AppListToolbar>
+
+    <form
+      v-if="showAdd"
+      class="panel mt-8 grid gap-3 p-5 sm:grid-cols-3"
+      @submit.prevent="createOrg"
+    >
       <div>
         <label class="text-sm font-medium text-[var(--ink)]">Name</label>
         <input
@@ -39,17 +60,31 @@
           <option value="required">required</option>
         </select>
       </div>
-      <button type="submit" class="btn-primary sm:col-span-3 !px-4 !py-2" :disabled="busy">
+      <button
+        type="submit"
+        class="btn-primary sm:col-span-3 !px-4 !py-2"
+        :disabled="busy"
+      >
         {{ busy ? 'Creating…' : 'Create organization' }}
       </button>
     </form>
 
-    <p v-if="errorMessage" class="mt-3 text-sm text-[var(--danger)]">{{ errorMessage }}</p>
-    <p v-if="notice" class="mt-3 text-sm text-[var(--accent-ink)]">{{ notice }}</p>
+    <p
+      v-if="errorMessage"
+      class="mt-3 text-sm text-[var(--danger)]"
+    >
+      {{ errorMessage }}
+    </p>
+    <p
+      v-if="notice"
+      class="mt-3 text-sm text-[var(--accent-ink)]"
+    >
+      {{ notice }}
+    </p>
 
     <ul class="mt-6 space-y-3">
       <li
-        v-for="org in orgs"
+        v-for="org in filteredOrgs"
         :key="org.id"
         class="panel flex flex-wrap items-center justify-between gap-3 px-4 py-3"
       >
@@ -85,6 +120,12 @@
           </button>
         </div>
       </li>
+      <li
+        v-if="!filteredOrgs.length"
+        class="py-8 text-center text-sm text-[var(--mute)]"
+      >
+        {{ orgs.length ? 'No organizations match this filter.' : 'No organizations yet.' }}
+      </li>
     </ul>
   </div>
 </template>
@@ -103,12 +144,25 @@ const nuxtApp = useNuxtApp()
 const { setActiveOrganizationAsPlatform } = useOrganization()
 
 const orgs = ref([])
+const listFilter = ref('')
+const showAdd = ref(false)
 const name = ref('')
 const slug = ref('')
 const mfaMode = ref('optional')
 const errorMessage = ref('')
 const notice = ref('')
 const busy = ref(false)
+
+const filteredOrgs = computed(() => {
+  const q = listFilter.value.trim().toLowerCase()
+  if (!q) return orgs.value
+  return orgs.value.filter((org) => {
+    const hay = [org.name, org.slug, org.mfa_mode]
+      .map((v) => String(v || '').toLowerCase())
+      .join(' ')
+    return hay.includes(q)
+  })
+})
 
 const load = async () => {
   const { data, error } = await supabase
@@ -141,6 +195,7 @@ const createOrg = async () => {
     name.value = ''
     slug.value = ''
     mfaMode.value = 'optional'
+    showAdd.value = false
     notice.value = `Created ${res.item.name} — you are an Admin member`
 
     if (typeof nuxtApp.$hydrateAuthState === 'function') {

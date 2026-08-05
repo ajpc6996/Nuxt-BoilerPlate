@@ -1,25 +1,36 @@
 <template>
   <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-          Sources
-        </h1>
-        <p class="mt-2 max-w-2xl text-[var(--mute)]">
-          Endpoint ingest jobs with a Retrieve → Filter → Ingest pipeline. Credentials come from the linked connection.
-          Active org:
-          <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
-        </p>
-      </div>
+    <div>
+      <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
+        Sources
+      </h1>
+      <p class="mt-2 max-w-2xl text-[var(--mute)]">
+        Endpoint ingest jobs with a Retrieve → Filter → Ingest pipeline. Credentials come from the linked connection.
+        Active org:
+        <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
+      </p>
+    </div>
+
+    <AppListToolbar>
+      <AppListFilter
+        v-model="listFilter"
+        placeholder="Filter sources…"
+      />
       <button
         type="button"
         class="btn-primary !px-4 !py-2"
         :disabled="!activeOrganization?.id || !connections.length"
         @click="openCreate"
       >
-        New source
+        Add
       </button>
-    </div>
+      <NuxtLink
+        to="/data-sources"
+        class="btn-secondary !px-4 !py-2"
+      >
+        Back
+      </NuxtLink>
+    </AppListToolbar>
 
     <p
       v-if="activeOrganization?.id && !connections.length && !pending"
@@ -71,7 +82,7 @@
         </thead>
         <tbody>
           <tr
-            v-for="row in items"
+            v-for="row in filteredItems"
             :key="row.id"
             class="border-b border-[var(--border-soft)]"
           >
@@ -139,12 +150,12 @@
               </div>
             </td>
           </tr>
-          <tr v-if="!items.length">
+          <tr v-if="!filteredItems.length">
             <td
               colspan="6"
               class="px-3 py-8 text-center text-[var(--mute)]"
             >
-              No sources yet.
+              {{ items.length ? 'No sources match this filter.' : 'No sources yet.' }}
             </td>
           </tr>
         </tbody>
@@ -165,7 +176,7 @@
             >(unsaved)</span>
           </h2>
           <p class="text-xs text-[var(--mute)]">
-            Double-click Retrieve / Filter / Ingest to configure. Drag cyan handles to link nodes.
+            Double-click Retrieve / Filter / Transform / Ingest to configure. Drag cyan handles to link nodes.
           </p>
         </div>
         <input
@@ -248,95 +259,59 @@
                 :destination-table="form.destinationTable"
                 class="h-full min-h-0"
               >
-                <template #node-config="{ node, close, updateFilter, removeFilter }">
-                  <div
-                    v-if="node.type === 'retrieve'"
-                    class="space-y-3"
-                  >
-                    <p class="text-xs text-[var(--mute)]">
-                      Shared credentials come from the connection above. Configure the endpoint here.
-                    </p>
-                    <div v-if="selectedType">
-                      <SchemaFormFields
-                        v-model="form.config"
-                        :schema="selectedType.config_schema"
-                        :omit-keys="lookupOmitKeys"
-                      />
-                      <div
-                        v-if="supportsLookup"
-                        class="mt-4"
-                      >
-                        <ConnectionLookupConfig
-                          v-model="form.config"
-                          :path-template="String(form.config.path || '')"
-                          :organization-id="activeOrganization?.id || ''"
-                        />
-                      </div>
-                    </div>
-                    <p
-                      v-else
-                      class="text-sm text-[var(--mute)]"
-                    >
-                      Select a connection first.
-                    </p>
-                    <button
-                      type="button"
-                      class="btn-secondary !px-3 !py-1.5 text-sm"
-                      @click="close"
-                    >
-                      Done
-                    </button>
-                  </div>
-
-                  <div
-                    v-else-if="node.type === 'filter'"
-                    class="space-y-4"
-                  >
-                    <PipelineFilterConfigPanel
-                      ref="filterConfigPanel"
-                      :model-value="node.data || {}"
-                      :sample-object="retrieveSample"
-                      :loading-sample="loadingRetrieveSample"
-                      @update:model-value="updateFilter"
-                      @fetch-sample="loadRetrieveSample"
+              <template #node-config="{ node, close, updateFilter, removeFilter, updateTransform, removeTransform }">
+                <div
+                  v-if="node.type === 'retrieve'"
+                  class="space-y-3"
+                >
+                  <p class="text-xs text-[var(--mute)]">
+                    Shared credentials come from the connection above. Configure the endpoint here.
+                  </p>
+                  <div v-if="selectedType">
+                    <SchemaFormFields
+                      v-model="form.config"
+                      :schema="selectedType.config_schema"
+                      :omit-keys="lookupOmitKeys"
                     />
-                    <div class="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        class="btn-secondary !px-3 !py-1.5 text-sm"
-                        @click="close"
-                      >
-                        Done
-                      </button>
-                      <button
-                        type="button"
-                        class="text-sm text-[var(--danger)] hover:underline"
-                        @click="removeFilter"
-                      >
-                        Remove Filter node
-                      </button>
+                    <div
+                      v-if="supportsLookup"
+                      class="mt-4"
+                    >
+                      <ConnectionLookupConfig
+                        v-model="form.config"
+                        :path-template="String(form.config.path || '')"
+                        :organization-id="activeOrganization?.id || ''"
+                      />
                     </div>
                   </div>
-
-                  <div
-                    v-else-if="node.type === 'ingest'"
-                    class="space-y-3"
+                  <p
+                    v-else
+                    class="text-sm text-[var(--mute)]"
                   >
-                    <p class="text-xs text-[var(--mute)]">
-                      Pipeline output is written to the destination table set in the header.
-                    </p>
-                    <div class="flex flex-col gap-1">
-                      <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
-                      <input
-                        v-model="form.destinationTable"
-                        type="text"
-                        class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
-                      >
-                      <p class="text-xs text-[var(--mute-soft)]">
-                        Physical table:
-                        <span class="font-mono text-[var(--accent-ink)]">ingest.{{ form.destinationTable || '…' }}</span>
-                      </p>
-                    </div>
+                    Select a connection first.
+                  </p>
+                  <button
+                    type="button"
+                    class="btn-secondary !px-3 !py-1.5 text-sm"
+                    @click="close"
+                  >
+                    Done
+                  </button>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'filter'"
+                  class="space-y-4"
+                >
+                  <PipelineFilterConfigPanel
+                    ref="filterConfigPanel"
+                    :model-value="node.data || {}"
+                    :sample-object="retrieveSample"
+                    :loading-sample="loadingRetrieveSample"
+                    @update:model-value="updateFilter"
+                    @fetch-sample="loadRetrieveSample"
+                  />
+                  <div class="flex flex-wrap gap-2">
                     <button
                       type="button"
                       class="btn-secondary !px-3 !py-1.5 text-sm"
@@ -344,8 +319,74 @@
                     >
                       Done
                     </button>
+                    <button
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeFilter"
+                    >
+                      Remove Filter node
+                    </button>
                   </div>
-                </template>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'transform'"
+                  class="space-y-4"
+                >
+                  <PipelineTransformConfigPanel
+                    ref="transformConfigPanel"
+                    :model-value="node.data || {}"
+                    :sample-object="operatorSample"
+                    :loading-sample="loadingOperatorSample"
+                    @update:model-value="updateTransform"
+                    @fetch-sample="loadParentSample(node.id)"
+                  />
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                    <button
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeTransform"
+                    >
+                      Remove Transform node
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'ingest'"
+                  class="space-y-3"
+                >
+                  <p class="text-xs text-[var(--mute)]">
+                    Pipeline output is written to the destination table set in the header.
+                  </p>
+                  <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
+                    <input
+                      v-model="form.destinationTable"
+                      type="text"
+                      class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
+                    >
+                    <p class="text-xs text-[var(--mute-soft)]">
+                      Physical table:
+                      <span class="font-mono text-[var(--accent-ink)]">ingest.{{ form.destinationTable || '…' }}</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn-secondary !px-3 !py-1.5 text-sm"
+                    @click="close"
+                  >
+                    Done
+                  </button>
+                </div>
+              </template>
               </SourcePipelineCanvas>
             </div>
             <template #fallback>
@@ -377,6 +418,7 @@
 <script setup>
 import { createDefaultPipeline, normalizePipeline } from '~~/shared/pipelineDefaults.js'
 import PipelineFilterConfigPanel from '~/components/pipeline/FilterConfigPanel.vue'
+import PipelineTransformConfigPanel from '~/components/pipeline/TransformConfigPanel.vue'
 
 definePageMeta({
   layout: 'app',
@@ -391,6 +433,7 @@ const authedFetch = useAuthedFetch()
 const { confirm: appConfirm } = useAppConfirm()
 
 const items = ref([])
+const listFilter = ref('')
 const connections = ref([])
 const catalogByTypeId = ref({})
 const pending = ref(false)
@@ -410,10 +453,13 @@ const outputCollapsed = ref(true)
 const outputHeight = ref(220)
 const retrieveSample = ref(null)
 const loadingRetrieveSample = ref(false)
+const operatorSample = ref(null)
+const loadingOperatorSample = ref(false)
 /** @type {import('vue').Ref<'test'|'run'|'save'|null>} */
 const editorBusyMode = ref(null)
 const pipelineCanvas = ref(null)
 const filterConfigPanel = ref(null)
+const transformConfigPanel = ref(null)
 const savedSnapshot = ref('')
 
 const form = reactive({
@@ -425,6 +471,22 @@ const form = reactive({
 })
 
 const editorBusy = computed(() => Boolean(editorBusyMode.value) || saving.value)
+
+const filteredItems = computed(() => {
+  const q = listFilter.value.trim().toLowerCase()
+  if (!q) return items.value
+  return items.value.filter((row) => {
+    const hay = [
+      row.name,
+      row.destination_table,
+      row.status,
+      row.connections?.name,
+      row.connections?.connector_types?.name,
+      row.last_error,
+    ].map((v) => String(v || '').toLowerCase()).join(' ')
+    return hay.includes(q)
+  })
+})
 
 const editorBusyLabel = computed(() => {
   if (editorBusyMode.value === 'test') return 'Testing source…'
@@ -497,8 +559,10 @@ function onConnectionChange() {
 
 function flushEditorState() {
   filterConfigPanel.value?.flush?.()
+  transformConfigPanel.value?.flush?.()
   pipelineCanvas.value?.flush?.()
 }
+
 
 function currentSnapshot() {
   return JSON.stringify({
@@ -625,6 +689,44 @@ async function loadRetrieveSample() {
   }
 }
 
+/**
+ * First object from the inbound parent of a Filter/Transform node.
+ * @param {string} nodeId
+ */
+async function loadParentSample(nodeId) {
+  if (!activeOrganization.value?.id || !form.connectionId) {
+    applyOutput('', '', 'Select a connection first')
+    return
+  }
+  if (!nodeId) return
+  flushEditorState()
+  await nextTick()
+  loadingOperatorSample.value = true
+  editorError.value = ''
+  try {
+    const res = await authedFetch('/api/data-sources/preview-pipeline-sample', {
+      method: 'POST',
+      body: {
+        organizationId: activeOrganization.value.id,
+        connectionId: form.connectionId,
+        config: form.config,
+        pipeline: form.pipeline,
+        nodeId,
+      },
+    })
+    operatorSample.value = res.sample
+    if (!res.sample) {
+      applyOutput('', '', 'Parent returned no object sample')
+    }
+  }
+  catch (err) {
+    applyOutput('', '', err?.data?.statusMessage || err?.message || 'Failed to load parent sample')
+  }
+  finally {
+    loadingOperatorSample.value = false
+  }
+}
+
 function openCreate() {
   editingId.value = null
   editorError.value = ''
@@ -632,6 +734,7 @@ function openCreate() {
   outputSummary.value = ''
   outputBody.value = ''
   retrieveSample.value = null
+  operatorSample.value = null
   form.name = ''
   form.connectionId = String(route.query.connectionId || connections.value[0]?.id || '')
   form.destinationTable = ''
@@ -640,6 +743,7 @@ function openCreate() {
   editorOpen.value = true
   nextTick(() => {
     savedSnapshot.value = ''
+    scheduleCanvasFit()
   })
 }
 
@@ -653,6 +757,7 @@ async function openEdit(row) {
   outputSummary.value = ''
   outputBody.value = ''
   retrieveSample.value = null
+  operatorSample.value = null
   try {
     const res = await authedFetch(`/api/data-sources/${row.id}`, {
       query: { organizationId: activeOrganization.value.id },
@@ -667,16 +772,33 @@ async function openEdit(row) {
     editorOpen.value = true
     await nextTick()
     markSaved()
+    scheduleCanvasFit()
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load source'
   }
 }
 
+function scheduleCanvasFit() {
+  // Wait for ClientOnly + Vue Flow layout, then fit like the Controls fit-view button.
+  nextTick(() => {
+    setTimeout(() => {
+      if (pipelineCanvas.value?.resetViewFit) {
+        pipelineCanvas.value.resetViewFit()
+      }
+      else {
+        pipelineCanvas.value?.fitToScreen?.(0)
+      }
+    }, 80)
+  })
+}
+
 async function load() {
   if (!activeOrganization.value?.id) {
     items.value = []
     connections.value = []
+    catalogByTypeId.value = {}
+    pending.value = false
     return
   }
   pending.value = true
@@ -703,6 +825,7 @@ async function load() {
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load sources'
+    items.value = []
   }
   finally {
     pending.value = false
