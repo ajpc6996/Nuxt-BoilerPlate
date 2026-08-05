@@ -99,26 +99,42 @@ Enable TOTP under Authentication settings. Enroll under **My User → Security**
 
 ## 5. Data source connectors
 
-Apply migration `supabase/migrations/20260804140000_data_source_connectors.sql` in the SQL Editor (or CLI).
+Apply these migrations in the SQL Editor (in order), plus earlier auth/RLS migrations as needed:
 
-Add a secrets encryption key to `.env` (any long random string):
+- `20260804140000_data_source_connectors.sql`
+- `20260804180000_physical_ingest_tables.sql`
+- `20260804200000_ingest_lookup_expansion.sql`
+- `20260804210000_connections_and_data_sources.sql` — splits **Connections** (shared auth) from **Sources** (per-endpoint ingest)
+
+Add secrets encryption (required) and optional LLM keys to `.env`:
 
 ```bash
 CONNECTOR_SECRETS_KEY=change-me-to-a-long-random-string
+# LLM for “Generate with AI” (Gemini recommended)
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key
+# GEMINI_MODEL=gemini-2.0-flash
+# Or OpenAI: LLM_PROVIDER=openai + OPENAI_API_KEY=sk-...
 ```
 
 Restart `npm run dev`.
 
+### Menu
+
 - **Connector Type** (`/data-sources/connector-types`) — platform admin + MFA  
-- **Connections** (`/data-sources/connections`) — platform or org admin + MFA  
+  - Seeded: `json_file`, `csv_file`, `rest_generic`  
+  - **Generate with AI** proposes connection / source / credential schemas; review then publish  
+- **Connections** (`/data-sources/connections`) — shared base URL + credentials (reusable)  
+- **Sources** (`/data-sources/sources`) — path, paging, lookup, destination table; pick an existing connection  
 
-Seeded types: `json_file`, `csv_file`, `rest_generic`.
+### Ingest landing
 
-**Ingest landing:** each connection’s `destination_table` becomes a real table
-`ingest.<destination_table>` (apply `20260804180000_physical_ingest_tables.sql`).
+Each source’s `destination_table` becomes `ingest.<destination_table>`.
 In the Table Editor, switch the schema dropdown from `public` to **`ingest`**.
 
-**URL lookup expansion (REST):** apply `20260804200000_ingest_lookup_expansion.sql`.
-On a REST connection, enable **Expand URL from ingest table**, set a path like
+### URL lookup expansion (REST sources)
+
+On a source, enable **Expand URL from ingest table**, set a path like
 `/teams/{team_id}/players`, pick a prior ingest table, and map each `{var}` to a column.
 A run issues one request per distinct value set (capped; test mode uses up to 3) and unions rows into the destination.
+Credentials still come from the linked **connection**.

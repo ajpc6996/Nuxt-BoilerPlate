@@ -46,6 +46,12 @@ export const appNavGroups = [
         to: '/data-sources/connections',
         roles: ['platform', 'orgAdmin'],
       },
+      {
+        id: 'sources',
+        label: 'Sources',
+        to: '/data-sources/sources',
+        roles: ['platform', 'orgAdmin'],
+      },
     ],
   },
   {

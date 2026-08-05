@@ -6,7 +6,7 @@
           Connections
         </h1>
         <p class="mt-2 max-w-2xl text-[var(--mute)]">
-          Configure org data source instances from connector types. Runs server-side into a destination table namespace.
+          Shared authenticated links to external systems. Credentials are defined once and reused by many sources.
           Active org:
           <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
         </p>
@@ -37,7 +37,7 @@
 
     <p
       v-if="notice"
-      class="panel mt-6 whitespace-pre-wrap border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--ink)]"
+      class="panel mt-6 border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--ink)]"
     >
       {{ notice }}
     </p>
@@ -58,9 +58,7 @@
           <tr>
             <th class="px-3 py-2 font-medium">Name</th>
             <th class="px-3 py-2 font-medium">Type</th>
-            <th class="px-3 py-2 font-medium">Destination</th>
             <th class="px-3 py-2 font-medium">Status</th>
-            <th class="px-3 py-2 font-medium">Last run</th>
             <th class="px-3 py-2 font-medium" />
           </tr>
         </thead>
@@ -74,9 +72,6 @@
             <td class="px-3 py-3 text-[var(--mute)]">
               {{ row.connector_types?.name || '—' }}
             </td>
-            <td class="px-3 py-3 font-mono text-[var(--accent-ink)]">
-              {{ row.destination_table }}
-            </td>
             <td class="px-3 py-3">
               <span
                 class="rounded px-2 py-0.5 text-xs font-medium"
@@ -84,9 +79,6 @@
               >
                 {{ row.status }}
               </span>
-            </td>
-            <td class="px-3 py-3 text-[var(--mute)]">
-              {{ formatDate(row.last_run_at) }}
             </td>
             <td class="px-3 py-3">
               <div class="flex flex-wrap gap-2">
@@ -97,22 +89,12 @@
                 >
                   Edit
                 </button>
-                <button
-                  type="button"
+                <NuxtLink
+                  :to="`/data-sources/sources?connectionId=${row.id}`"
                   class="btn-secondary !px-2 !py-1 text-xs"
-                  :disabled="busyId === row.id"
-                  @click="runConnection(row, 'test')"
                 >
-                  Test
-                </button>
-                <button
-                  type="button"
-                  class="btn-primary !px-2 !py-1 text-xs"
-                  :disabled="busyId === row.id"
-                  @click="runConnection(row, 'run')"
-                >
-                  Run
-                </button>
+                  Sources
+                </NuxtLink>
                 <button
                   type="button"
                   class="text-xs text-[var(--danger)] hover:underline"
@@ -126,10 +108,10 @@
           </tr>
           <tr v-if="!items.length">
             <td
-              colspan="6"
+              colspan="4"
               class="px-3 py-8 text-center text-[var(--mute)]"
             >
-              No connections yet.
+              No connections yet. Create one, then add sources that reuse it.
             </td>
           </tr>
         </tbody>
@@ -152,6 +134,7 @@
             <input
               v-model="form.name"
               type="text"
+              placeholder="e.g. Acme API – Production"
               class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
             >
           </div>
@@ -175,37 +158,12 @@
             </select>
           </div>
 
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
-            <input
-              v-model="form.destinationTable"
-              type="text"
-              placeholder="e.g. sales_json"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
-            >
-            <p class="text-xs text-[var(--mute-soft)]">
-              Creates physical table <span class="font-mono">ingest.&lt;name&gt;</span>
-              (a-z, 0-9, underscore). Re-run replaces this connection’s rows.
-            </p>
-          </div>
-
-          <div v-if="selectedType">
-            <h3 class="mb-2 text-sm font-semibold text-[var(--ink)]">Configuration</h3>
+          <div v-if="selectedType && hasConnectionFields">
+            <h3 class="mb-2 text-sm font-semibold text-[var(--ink)]">Connection settings</h3>
             <SchemaFormFields
               v-model="form.config"
-              :schema="selectedType.config_schema"
-              :omit-keys="lookupOmitKeys"
+              :schema="selectedType.connection_schema"
             />
-            <div
-              v-if="supportsLookup"
-              class="mt-4"
-            >
-              <ConnectionLookupConfig
-                v-model="form.config"
-                :path-template="String(form.config.path || '')"
-                :organization-id="activeOrganization?.id || ''"
-              />
-            </div>
           </div>
 
           <div v-if="selectedType && hasCredentialFields">
@@ -217,6 +175,13 @@
               :has-existing-secrets="form.hasSecrets"
             />
           </div>
+
+          <p
+            v-if="selectedType && !hasConnectionFields && !hasCredentialFields"
+            class="text-sm text-[var(--mute)]"
+          >
+            This type has no shared connection fields. You can still create a named connection for sources to attach to.
+          </p>
         </div>
 
         <div class="mt-6 flex justify-end gap-2">
@@ -265,7 +230,6 @@ const saving = ref(false)
 const form = reactive({
   name: '',
   connectorTypeId: '',
-  destinationTable: '',
   config: {},
   credentials: {},
   hasSecrets: false,
@@ -279,31 +243,14 @@ const hasCredentialFields = computed(() =>
   Boolean(Object.keys(selectedType.value?.credential_schema?.properties || {}).length),
 )
 
-const supportsLookup = computed(() =>
-  selectedType.value?.runner_key === 'rest_generic'
-  || Boolean(selectedType.value?.capabilities?.lookupExpansion),
-)
-
-const lookupOmitKeys = computed(() =>
-  supportsLookup.value
-    ? ['lookupEnabled', 'lookupTable', 'maxExpansions']
-    : [],
+const hasConnectionFields = computed(() =>
+  Boolean(Object.keys(selectedType.value?.connection_schema?.properties || {}).length),
 )
 
 function statusClass(status) {
   if (status === 'ready') return 'bg-emerald-500/15 text-emerald-300'
   if (status === 'error') return 'bg-red-500/15 text-[var(--danger)]'
   return 'bg-[var(--accent-soft)] text-[var(--mute)]'
-}
-
-function formatDate(value) {
-  if (!value) return '—'
-  try {
-    return new Date(value).toLocaleString()
-  }
-  catch {
-    return value
-  }
 }
 
 function defaultsFromSchema(schema) {
@@ -316,7 +263,7 @@ function defaultsFromSchema(schema) {
 }
 
 function onTypeChange() {
-  form.config = defaultsFromSchema(selectedType.value?.config_schema)
+  form.config = defaultsFromSchema(selectedType.value?.connection_schema)
   form.credentials = {}
 }
 
@@ -324,8 +271,7 @@ function openCreate() {
   editingId.value = null
   form.name = ''
   form.connectorTypeId = catalog.value[0]?.id || ''
-  form.destinationTable = ''
-  form.config = defaultsFromSchema(selectedType.value?.config_schema)
+  form.config = defaultsFromSchema(selectedType.value?.connection_schema)
   form.credentials = {}
   form.hasSecrets = false
   editorOpen.value = true
@@ -344,7 +290,6 @@ async function openEdit(row) {
     editingId.value = item.id
     form.name = item.name
     form.connectorTypeId = item.connector_type_id
-    form.destinationTable = item.destination_table
     form.config = { ...(item.config || {}) }
     form.credentials = {}
     form.hasSecrets = Boolean(item.hasSecrets)
@@ -397,7 +342,6 @@ async function saveConnection() {
         body: {
           organizationId: activeOrganization.value.id,
           name: form.name,
-          destinationTable: form.destinationTable,
           config: form.config,
           credentials: form.credentials,
         },
@@ -411,12 +355,11 @@ async function saveConnection() {
           organizationId: activeOrganization.value.id,
           connectorTypeId: form.connectorTypeId,
           name: form.name,
-          destinationTable: form.destinationTable,
           config: form.config,
           credentials: form.credentials,
         },
       })
-      notice.value = 'Connection created'
+      notice.value = 'Connection created — add a source to fetch data.'
     }
     editorOpen.value = false
     await loadConnections()
@@ -431,43 +374,9 @@ async function saveConnection() {
 
 /**
  * @param {Record<string, unknown>} row
- * @param {'test'|'run'} mode
- */
-async function runConnection(row, mode) {
-  busyId.value = row.id
-  error.value = ''
-  notice.value = ''
-  try {
-    const res = await authedFetch(`/api/connections/${row.id}/run`, {
-      method: 'POST',
-      body: {
-        organizationId: activeOrganization.value.id,
-        mode,
-      },
-    })
-    if (mode === 'test') {
-      const preview = JSON.stringify(res.sample || [], null, 2).slice(0, 800)
-      notice.value = `Test OK — fetched ${res.rowsFetched} row(s). Preview:\n${preview}`
-    }
-    else {
-      notice.value = `Run OK — wrote ${res.rowsWritten} row(s) to ${res.physicalTable || res.destinationTable}.`
-    }
-    await loadConnections()
-  }
-  catch (err) {
-    error.value = err?.data?.statusMessage || err?.message || 'Run failed'
-    await loadConnections()
-  }
-  finally {
-    busyId.value = null
-  }
-}
-
-/**
- * @param {Record<string, unknown>} row
  */
 async function removeConnection(row) {
-  if (!confirm(`Delete connection “${row.name}”?`)) return
+  if (!confirm(`Delete connection “${row.name}”? Linked sources will also be removed.`)) return
   busyId.value = row.id
   error.value = ''
   try {

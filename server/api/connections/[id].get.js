@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
 
   const { data, error } = await admin
     .from('connections')
-    .select('id, name, status, destination_table, config, sync_state, last_run_at, last_error, created_at, updated_at, connector_type_id, connector_types(*)')
+    .select('id, name, status, config, sync_state, last_error, created_at, updated_at, connector_type_id, connector_types(*)')
     .eq('id', id)
     .eq('organization_id', organizationId)
     .maybeSingle()
@@ -30,10 +30,16 @@ export default defineEventHandler(async (event) => {
     .eq('connection_id', id)
     .maybeSingle()
 
+  const { count } = await admin
+    .from('data_sources')
+    .select('id', { count: 'exact', head: true })
+    .eq('connection_id', id)
+
   return {
     item: {
       ...data,
       hasSecrets: Boolean(secretRow),
+      dataSourceCount: count || 0,
     },
   }
 })

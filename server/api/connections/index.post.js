@@ -1,14 +1,10 @@
-import {
-  encryptSecrets,
-  sanitizeDestinationTable,
-} from '~~/server/utils/connectorCrypto.js'
+import { encryptSecrets } from '~~/server/utils/connectorCrypto.js'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const organizationId = body?.organizationId
   const connectorTypeId = body?.connectorTypeId
   const name = String(body?.name || '').trim()
-  const destinationTable = sanitizeDestinationTable(body?.destinationTable)
   const config = body?.config && typeof body.config === 'object' ? body.config : {}
   const credentials = body?.credentials && typeof body.credentials === 'object'
     ? body.credentials
@@ -43,12 +39,12 @@ export default defineEventHandler(async (event) => {
       organization_id: organizationId,
       connector_type_id: connectorTypeId,
       name,
-      destination_table: destinationTable,
+      destination_table: null,
       config,
       status: 'draft',
       created_by: user.id,
     })
-    .select('id, name, status, destination_table, config, connector_type_id, created_at')
+    .select('id, name, status, config, connector_type_id, created_at')
     .single()
 
   if (error) {
@@ -71,5 +67,15 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  return { item: connection }
+  await admin
+    .from('connections')
+    .update({ status: hasSecrets || Object.keys(config).length ? 'ready' : 'draft' })
+    .eq('id', connection.id)
+
+  return {
+    item: {
+      ...connection,
+      status: hasSecrets || Object.keys(config).length ? 'ready' : 'draft',
+    },
+  }
 })

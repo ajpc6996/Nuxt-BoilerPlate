@@ -1,7 +1,6 @@
 import {
   decryptSecrets,
   encryptSecrets,
-  sanitizeDestinationTable,
 } from '~~/server/utils/connectorCrypto.js'
 
 export default defineEventHandler(async (event) => {
@@ -37,16 +36,13 @@ export default defineEventHandler(async (event) => {
 
   if (body.name != null) patch.name = String(body.name).trim()
   if (body.config && typeof body.config === 'object') patch.config = body.config
-  if (body.destinationTable != null) {
-    patch.destination_table = sanitizeDestinationTable(body.destinationTable)
-  }
   if (body.status != null) patch.status = body.status
 
   const { data, error } = await admin
     .from('connections')
     .update(patch)
     .eq('id', id)
-    .select('id, name, status, destination_table, config, last_run_at, last_error, updated_at, connector_type_id')
+    .select('id, name, status, config, last_error, updated_at, connector_type_id')
     .single()
 
   if (error) {

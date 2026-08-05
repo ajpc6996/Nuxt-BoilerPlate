@@ -1,6 +1,3 @@
-/**
- * Enabled connector types for connection forms (org admin or platform).
- */
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const organizationId = String(query.organizationId || '')
@@ -12,9 +9,9 @@ export default defineEventHandler(async (event) => {
 
   const admin = useSupabaseAdmin()
   const { data, error } = await admin
-    .from('connector_types')
-    .select('id, key, name, description, category, auth_mode, runner_key, connection_schema, config_schema, credential_schema, capabilities, is_enabled')
-    .eq('is_enabled', true)
+    .from('data_sources')
+    .select('id, name, status, destination_table, config, last_run_at, last_error, created_at, updated_at, connection_id, connections(id, name, connector_types(id, key, name, runner_key, capabilities, config_schema))')
+    .eq('organization_id', organizationId)
     .order('name')
 
   if (error) {

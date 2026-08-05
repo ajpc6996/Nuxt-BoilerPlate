@@ -14,8 +14,10 @@ export default defineEventHandler(async (event) => {
   if (body.description != null) patch.description = String(body.description)
   if (body.is_enabled != null) patch.is_enabled = Boolean(body.is_enabled)
   if (body.config_schema != null) patch.config_schema = body.config_schema
+  if (body.connection_schema != null) patch.connection_schema = body.connection_schema
   if (body.credential_schema != null) patch.credential_schema = body.credential_schema
   if (body.capabilities != null) patch.capabilities = body.capabilities
+  if (body.generation_notes != null) patch.generation_notes = String(body.generation_notes)
 
   const admin = useSupabaseAdmin()
   const { data, error } = await admin

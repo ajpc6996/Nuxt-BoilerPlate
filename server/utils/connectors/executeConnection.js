@@ -1,28 +1,46 @@
-import { decryptSecrets } from '../connectorCrypto.js'
+import { decryptSecrets, encryptSecrets } from '../connectorCrypto.js'
 import { getConnectorRunner } from './registry.js'
 
 /**
- * Execute a connection in test or run mode.
- * Run lands rows into physical table ingest.<destination_table>.
+ * Merge connection (shared) + data-source (endpoint) config.
+ * Data-source keys win on conflict.
+ * @param {Record<string, unknown>} connectionConfig
+ * @param {Record<string, unknown>} sourceConfig
+ */
+export function mergeConnectorConfig(connectionConfig, sourceConfig) {
+  return {
+    ...(connectionConfig && typeof connectionConfig === 'object' ? connectionConfig : {}),
+    ...(sourceConfig && typeof sourceConfig === 'object' ? sourceConfig : {}),
+  }
+}
+
+/**
+ * Execute a data source in test or run mode.
+ * Uses shared connection credentials; lands rows into ingest.<destination_table>.
  *
  * @param {{
- *   connectionId: string,
+ *   dataSourceId: string,
  *   mode?: 'test' | 'run',
  *   userId?: string,
  * }} opts
  */
-export async function executeConnection(opts) {
+export async function executeDataSource(opts) {
   const mode = opts.mode === 'test' ? 'test' : 'run'
   const admin = useSupabaseAdmin()
 
-  const { data: connection, error: connError } = await admin
-    .from('connections')
-    .select('*, connector_types(*)')
-    .eq('id', opts.connectionId)
+  const { data: dataSource, error: dsError } = await admin
+    .from('data_sources')
+    .select('*, connections(*, connector_types(*))')
+    .eq('id', opts.dataSourceId)
     .maybeSingle()
 
-  if (connError || !connection) {
-    throw createError({ statusCode: 404, statusMessage: 'Connection not found' })
+  if (dsError || !dataSource) {
+    throw createError({ statusCode: 404, statusMessage: 'Data source not found' })
+  }
+
+  const connection = dataSource.connections
+  if (!connection) {
+    throw createError({ statusCode: 400, statusMessage: 'Data source has no connection' })
   }
 
   const type = connection.connector_types
@@ -41,11 +59,23 @@ export async function executeConnection(opts) {
     secrets = decryptSecrets(secretRow.ciphertext)
   }
 
+  // Optional: persist refreshed tokens back onto the connection
+  const persistSecrets = async (nextSecrets) => {
+    if (!nextSecrets || typeof nextSecrets !== 'object') return
+    const ciphertext = encryptSecrets(nextSecrets)
+    await admin.from('connection_secrets').upsert({
+      connection_id: connection.id,
+      ciphertext,
+      updated_at: new Date().toISOString(),
+    })
+  }
+
   const { data: run, error: runError } = await admin
     .from('connection_runs')
     .insert({
       connection_id: connection.id,
-      organization_id: connection.organization_id,
+      data_source_id: dataSource.id,
+      organization_id: dataSource.organization_id,
       status: 'running',
       mode,
       started_by: opts.userId || null,
@@ -60,16 +90,23 @@ export async function executeConnection(opts) {
     })
   }
 
-  const physicalTable = `ingest.${connection.destination_table}`
+  const physicalTable = `ingest.${dataSource.destination_table}`
+  const mergedConfig = mergeConnectorConfig(connection.config, dataSource.config)
 
   try {
     const runner = getConnectorRunner(type.runner_key)
     const result = await runner({
-      config: connection.config || {},
+      config: mergedConfig,
       secrets,
       mode,
-      organizationId: connection.organization_id,
+      organizationId: dataSource.organization_id,
+      persistSecrets,
     })
+
+    if (result?.secrets && typeof result.secrets === 'object') {
+      secrets = result.secrets
+      await persistSecrets(secrets)
+    }
 
     const rows = Array.isArray(result.rows) ? result.rows : []
     const sample = rows.slice(0, mode === 'test' ? 5 : rows.length)
@@ -79,8 +116,8 @@ export async function executeConnection(opts) {
       const { data: written, error: ingestError } = await admin.rpc(
         'ingest_replace_rows',
         {
-          p_table: connection.destination_table,
-          p_organization_id: connection.organization_id,
+          p_table: dataSource.destination_table,
+          p_organization_id: dataSource.organization_id,
           p_connection_id: connection.id,
           p_run_id: run.id,
           p_rows: sample,
@@ -96,21 +133,21 @@ export async function executeConnection(opts) {
 
       rowsWritten = Number(written) || 0
 
-      // Keep audit copy in connection_ingest_rows
       await admin
         .from('connection_ingest_rows')
         .delete()
-        .eq('connection_id', connection.id)
-        .eq('destination_table', connection.destination_table)
+        .eq('data_source_id', dataSource.id)
+        .eq('destination_table', dataSource.destination_table)
 
       if (sample.length) {
         const chunkSize = 200
         for (let i = 0; i < sample.length; i += chunkSize) {
           const chunk = sample.slice(i, i + chunkSize).map((data, idx) => ({
-            organization_id: connection.organization_id,
+            organization_id: dataSource.organization_id,
             connection_id: connection.id,
+            data_source_id: dataSource.id,
             run_id: run.id,
-            destination_table: connection.destination_table,
+            destination_table: dataSource.destination_table,
             row_index: i + idx,
             data,
           }))
@@ -134,17 +171,25 @@ export async function executeConnection(opts) {
       .eq('id', run.id)
 
     await admin
-      .from('connections')
+      .from('data_sources')
       .update({
         status: 'ready',
         last_run_at: new Date().toISOString(),
         last_error: null,
         sync_state: {
-          ...(connection.sync_state || {}),
+          ...(dataSource.sync_state || {}),
           lastMeta: result.meta || {},
           lastRowCount: rows.length,
           physicalTable,
         },
+      })
+      .eq('id', dataSource.id)
+
+    await admin
+      .from('connections')
+      .update({
+        status: 'ready',
+        last_error: null,
       })
       .eq('id', connection.id)
 
@@ -155,12 +200,14 @@ export async function executeConnection(opts) {
       rowsWritten,
       sample: mode === 'test' ? sample : sample.slice(0, 3),
       meta: result.meta || {},
-      destinationTable: connection.destination_table,
+      destinationTable: dataSource.destination_table,
       physicalTable,
+      connectionId: connection.id,
+      dataSourceId: dataSource.id,
     }
   }
   catch (err) {
-    const message = err?.statusMessage || err?.message || 'Connection run failed'
+    const message = err?.statusMessage || err?.message || 'Data source run failed'
     await admin
       .from('connection_runs')
       .update({
@@ -171,16 +218,47 @@ export async function executeConnection(opts) {
       .eq('id', run.id)
 
     await admin
-      .from('connections')
+      .from('data_sources')
       .update({
         status: 'error',
         last_error: message,
       })
-      .eq('id', connection.id)
+      .eq('id', dataSource.id)
 
     throw createError({
       statusCode: err?.statusCode || 500,
       statusMessage: message,
     })
   }
+}
+
+/**
+ * @deprecated use executeDataSource
+ */
+export async function executeConnection(opts) {
+  if (opts.dataSourceId) {
+    return executeDataSource(opts)
+  }
+  // Legacy: if only connectionId, run the first linked data source
+  const admin = useSupabaseAdmin()
+  const { data: ds } = await admin
+    .from('data_sources')
+    .select('id')
+    .eq('connection_id', opts.connectionId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!ds?.id) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'No data source linked to this connection. Create a data source first.',
+    })
+  }
+
+  return executeDataSource({
+    dataSourceId: ds.id,
+    mode: opts.mode,
+    userId: opts.userId,
+  })
 }

@@ -179,12 +179,68 @@ async function fetchPaged(opts) {
       ? withQuery(nextUrl, { [opts.pageParam]: String(page) })
       : nextUrl
 
-    const payload = await $fetch(url, {
-      method: opts.method,
-      headers: opts.headers,
-    })
+    let payload
+    try {
+      payload = await $fetch(url, {
+        method: opts.method,
+        headers: opts.headers,
+      })
+    }
+    catch (err) {
+      const statusCode = Number(err?.statusCode || err?.response?.status) || 502
+      const responseData = err?.data
+        || err?.response?._data
+        || err?.response?.data
+        || null
 
-    const rows = toRowArray(payload, opts.itemsPath)
+      const responsePreview = safeJsonPreview(responseData, 2500)
+      const headersRedacted = redactHeaders(opts.headers)
+
+      const msg = [
+        `REST fetch failed (HTTP ${statusCode})`,
+        `${opts.method} ${url}`,
+        `Headers: ${JSON.stringify(headersRedacted)}`,
+        `Response: ${responsePreview || '(empty)'}`,
+      ].join('\n')
+
+      console.error('[rest_generic] fetch error', {
+        url,
+        method: opts.method,
+        statusCode,
+        headersRedacted,
+        responsePreview,
+      })
+
+      throw createError({
+        statusCode,
+        statusMessage: msg,
+      })
+    }
+
+    let rows
+    try {
+      rows = toRowArray(payload, opts.itemsPath)
+    }
+    catch (err) {
+      const parsePreview = safeJsonPreview(payload, 3000)
+      console.error('[rest_generic] toRowArray parse error', {
+        url,
+        method: opts.method,
+        itemsPath: opts.itemsPath,
+        parseError: err?.statusMessage || err?.message,
+        responsePreview: parsePreview,
+      })
+
+      throw createError({
+        statusCode: Number(err?.statusCode) || 400,
+        statusMessage: [
+          'Response could not be parsed for ingestion',
+          `itemsPath="${opts.itemsPath || ''}"`,
+          `Error=${err?.statusMessage || err?.message || 'parse error'}`,
+          `ResponsePreview=${parsePreview || '(empty)'}`,
+        ].join('\n'),
+      })
+    }
     allRows.push(...rows)
     pagesFetched += 1
 
@@ -227,4 +283,40 @@ function withQuery(url, query) {
   const u = new URL(url)
   Object.entries(query).forEach(([k, v]) => u.searchParams.set(k, v))
   return u.toString()
+}
+
+/**
+ * @param {unknown} value
+ * @param {number} maxChars
+ */
+function safeJsonPreview(value, maxChars = 2000) {
+  try {
+    const text = typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2)
+    if (!text) return ''
+    return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text
+  }
+  catch {
+    return String(value || '').slice(0, maxChars)
+  }
+}
+
+/**
+ * @param {Record<string, string>} headers
+ */
+function redactHeaders(headers) {
+  const out = {}
+  if (!headers || typeof headers !== 'object') return out
+  Object.entries(headers).forEach(([k, v]) => {
+    const key = String(k).toLowerCase()
+    const val = typeof v === 'string' ? v : String(v ?? '')
+    if (key.includes('authorization') || key.includes('api-key') || key.includes('token')) {
+      out[k] = val ? `***${val.slice(-4)}` : '(empty)'
+    }
+    else {
+      out[k] = val ? String(val).slice(0, 100) : '(empty)'
+    }
+  })
+  return out
 }

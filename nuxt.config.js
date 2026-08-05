@@ -57,6 +57,14 @@ export default defineNuxtConfig({
       || '',
     // AES key material for connection_secrets (any long random string)
     connectorSecretsKey: process.env.CONNECTOR_SECRETS_KEY || '',
+    // LLM for connector-type generation: gemini | openai (auto if unset)
+    llmProvider: process.env.LLM_PROVIDER || '',
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    geminiBaseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    openaiBaseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
     public: {
       supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL || '',
       // Prefer publishable keys (sb_publishable_...). Legacy anon kept as fallback.
