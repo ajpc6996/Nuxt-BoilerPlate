@@ -62,6 +62,12 @@ const toneClass = computed(() => {
   if (props.tone === 'retrieve') {
     return 'border-[var(--accent)] bg-[var(--accent-soft)]'
   }
+  if (props.tone === 'fetch') {
+    return 'border-sky-500/50 bg-sky-500/10'
+  }
+  if (props.tone === 'merge') {
+    return 'border-amber-500/50 bg-amber-500/10'
+  }
   if (props.tone === 'ingest') {
     return 'border-emerald-500/50 bg-emerald-500/10'
   }

@@ -1,7 +1,8 @@
 import { decryptSecrets, encryptSecrets } from '../connectorCrypto.js'
 import { getConnectorRunner } from './registry.js'
-import { normalizePipeline } from './pipeline/defaults.js'
+import { normalizePipeline, isMergePipeline } from './pipeline/defaults.js'
 import { executePipeline } from './pipeline/runPipeline.js'
+import { loadFetchInputs } from './pipeline/loadFetchInputs.js'
 
 /**
  * Merge connection (shared) + data-source (endpoint) config.
@@ -18,17 +19,21 @@ export function mergeConnectorConfig(connectionConfig, sourceConfig) {
 
 /**
  * Execute a data source in test or run mode.
- * Retrieve → pipeline (Filter…) → Ingest (run mode only).
+ * Retrieve → pipeline (Filter…) → Ingest (run mode only),
+ * or Fetch (last_ingest | refresh) → Merge → … → Ingest.
  *
  * @param {{
  *   dataSourceId: string,
  *   mode?: 'test' | 'run',
  *   userId?: string,
+ *   fetchStack?: string[],
+ *   returnRows?: boolean,
  * }} opts
  */
 export async function executeDataSource(opts) {
   const mode = opts.mode === 'test' ? 'test' : 'run'
   const admin = useSupabaseAdmin()
+  const fetchStack = Array.isArray(opts.fetchStack) ? opts.fetchStack : []
 
   const { data: dataSource, error: dsError } = await admin
     .from('data_sources')
@@ -38,6 +43,13 @@ export async function executeDataSource(opts) {
 
   if (dsError || !dataSource) {
     throw createError({ statusCode: 404, statusMessage: 'Data source not found' })
+  }
+
+  if (fetchStack.includes(dataSource.id)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Circular merge Fetch dependency detected',
+    })
   }
 
   const connection = dataSource.connections
@@ -94,31 +106,60 @@ export async function executeDataSource(opts) {
   const physicalTable = `ingest.${dataSource.destination_table}`
   const mergedConfig = mergeConnectorConfig(connection.config, dataSource.config)
   const pipeline = normalizePipeline(dataSource.pipeline)
+  const merge = isMergePipeline(pipeline)
 
   try {
-    const runner = getConnectorRunner(type.runner_key)
-    const result = await runner({
-      config: mergedConfig,
-      secrets,
-      mode,
-      organizationId: dataSource.organization_id,
-      persistSecrets,
-    })
+    /** @type {Record<string, unknown>[]} */
+    let retrievedRows = []
+    /** @type {Record<string, unknown>} */
+    let resultMeta = {}
+    /** @type {ReturnType<typeof executePipeline>} */
+    let pipelineResult
 
-    if (result?.secrets && typeof result.secrets === 'object') {
-      secrets = result.secrets
-      await persistSecrets(secrets)
-    }
-
-    const retrievedRows = Array.isArray(result.rows) ? result.rows : []
     // Always collect step samples on Test so the editor output panel can show debug.
     const pipelineDebug = Boolean(pipeline.debug) || mode === 'test'
-    const pipelineResult = executePipeline({
-      pipeline,
-      retrievedRows,
-      retrieveMeta: result.meta || {},
-      debug: pipelineDebug,
-    })
+
+    if (merge) {
+      const seedOutputs = await loadFetchInputs({
+        pipeline,
+        organizationId: dataSource.organization_id,
+        parentMode: mode,
+        userId: opts.userId,
+        excludeSourceId: dataSource.id,
+        fetchStack: [...fetchStack, dataSource.id],
+      })
+      pipelineResult = executePipeline({
+        pipeline,
+        seedOutputs,
+        debug: pipelineDebug,
+      })
+      retrievedRows = Object.values(seedOutputs).flat()
+      resultMeta = { kind: 'merge', fetchCount: Object.keys(seedOutputs).length }
+    }
+    else {
+      const runner = getConnectorRunner(type.runner_key)
+      const result = await runner({
+        config: mergedConfig,
+        secrets,
+        mode,
+        organizationId: dataSource.organization_id,
+        persistSecrets,
+      })
+
+      if (result?.secrets && typeof result.secrets === 'object') {
+        secrets = result.secrets
+        await persistSecrets(secrets)
+      }
+
+      retrievedRows = Array.isArray(result.rows) ? result.rows : []
+      resultMeta = result.meta || {}
+      pipelineResult = executePipeline({
+        pipeline,
+        retrievedRows,
+        retrieveMeta: resultMeta,
+        debug: pipelineDebug,
+      })
+    }
 
     const rows = pipelineResult.rows
     const sample = rows.slice(0, mode === 'test' ? 5 : rows.length)
@@ -195,7 +236,7 @@ export async function executeDataSource(opts) {
         last_error: null,
         sync_state: {
           ...(dataSource.sync_state || {}),
-          lastMeta: result.meta || {},
+          lastMeta: resultMeta,
           lastRowCount: rows.length,
           lastRetrievedCount: retrievedRows.length,
           lastPipelineSummary: summary,
@@ -222,7 +263,8 @@ export async function executeDataSource(opts) {
       rowsAfterPipeline: rows.length,
       rowsWritten,
       sample: mode === 'test' ? sample : sample.slice(0, 3),
-      meta: result.meta || {},
+      ...(opts.returnRows ? { rows } : {}),
+      meta: resultMeta,
       pipelineSummary: summary,
       pipelineSteps: pipelineDebug ? pipelineResult.steps : undefined,
       destinationTable: dataSource.destination_table,

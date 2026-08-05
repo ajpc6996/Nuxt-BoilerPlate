@@ -1,5 +1,5 @@
 /**
- * Layered left-to-right layout by graph depth from Retrieve.
+ * Layered left-to-right layout by graph depth from Retrieve / Fetch roots.
  *
  * @param {Array<{ id: string, type?: string, position?: { x: number, y: number } }>} nodes
  * @param {Array<{ source: string, target: string }>} edges
@@ -16,13 +16,16 @@ export function layoutPipelineNodes(nodes, edges, opts = {}) {
   const edgeList = Array.isArray(edges) ? edges : []
   if (!list.length) return []
 
-  const retrieve = list.find((n) => n.type === 'retrieve') || list[0]
+  const roots = list.filter((n) => n.type === 'retrieve' || n.type === 'fetch')
+  const rootList = roots.length ? roots : [list[0]]
   /** @type {Record<string, number>} */
   const depth = {}
   list.forEach((n) => {
     depth[n.id] = Number.POSITIVE_INFINITY
   })
-  depth[retrieve.id] = 0
+  rootList.forEach((r) => {
+    depth[r.id] = 0
+  })
 
   const outs = {}
   list.forEach((n) => {
@@ -32,7 +35,7 @@ export function layoutPipelineNodes(nodes, edges, opts = {}) {
     if (outs[e.source]) outs[e.source].push(e.target)
   })
 
-  const queue = [retrieve.id]
+  const queue = rootList.map((r) => r.id)
   while (queue.length) {
     const id = queue.shift()
     const d = depth[id]
@@ -61,8 +64,8 @@ export function layoutPipelineNodes(nodes, edges, opts = {}) {
     byDepth[d].push(n.id)
   })
 
-  // Stable order within a layer: retrieve, filter, transform, ingest, then id
-  const typeRank = { retrieve: 0, filter: 1, transform: 2, ingest: 3 }
+  // Stable order within a layer
+  const typeRank = { retrieve: 0, fetch: 0, merge: 1, filter: 2, transform: 3, ingest: 4 }
   Object.keys(byDepth).forEach((d) => {
     byDepth[d].sort((a, b) => {
       const na = list.find((n) => n.id === a)

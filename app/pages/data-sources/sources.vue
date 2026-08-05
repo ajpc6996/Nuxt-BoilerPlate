@@ -5,8 +5,8 @@
         Sources
       </h1>
       <p class="mt-2 max-w-2xl text-[var(--mute)]">
-        Endpoint ingest jobs with a Retrieve → Filter → Ingest pipeline. Credentials come from the linked connection.
-        Active org:
+        Endpoint ingest jobs (Retrieve → Filter → Ingest) or multi-source merges (Fetch → Merge → Ingest).
+        Credentials come from the linked connection. Active org:
         <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
       </p>
     </div>
@@ -163,6 +163,120 @@
     </div>
 
     <div
+      v-if="wizardOpen"
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--modal-scrim)] p-4"
+      @click.self="closeWizard"
+    >
+      <div class="panel max-h-[90vh] w-full max-w-lg overflow-y-auto px-6 py-5">
+        <h2 class="font-display text-xl font-semibold text-[var(--ink)]">
+          New source
+        </h2>
+        <p class="mt-1 text-sm text-[var(--mute)]">
+          Set name, connection, and destination before opening the pipeline canvas.
+        </p>
+
+        <div class="mt-5 space-y-4">
+          <fieldset class="space-y-2">
+            <legend class="text-xs font-medium text-[var(--mute)]">
+              Template
+            </legend>
+            <label class="flex cursor-pointer items-start gap-2 rounded-md border border-[var(--border)] px-3 py-2 hover:border-[var(--accent)]">
+              <input
+                v-model="wizard.template"
+                type="radio"
+                value="retrieve"
+                class="mt-1 accent-[var(--accent)]"
+              >
+              <span>
+                <span class="block text-sm text-[var(--ink)]">Simple</span>
+                <span class="block text-[10px] text-[var(--mute-soft)]">
+                  Retrieve from the connection endpoint, then filter / transform / ingest.
+                </span>
+              </span>
+            </label>
+            <label class="flex cursor-pointer items-start gap-2 rounded-md border border-[var(--border)] px-3 py-2 hover:border-[var(--accent)]">
+              <input
+                v-model="wizard.template"
+                type="radio"
+                value="merge"
+                class="mt-1 accent-[var(--accent)]"
+              >
+              <span>
+                <span class="block text-sm text-[var(--ink)]">Merge</span>
+                <span class="block text-[10px] text-[var(--mute-soft)]">
+                  Join 2+ existing sources (default: last ingest; optional Refresh now).
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
+          <div class="flex flex-col gap-1">
+            <label class="text-xs font-medium text-[var(--mute)]">Name</label>
+            <input
+              v-model="wizard.name"
+              type="text"
+              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+              placeholder="My source"
+            >
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-xs font-medium text-[var(--mute)]">Connection</label>
+            <select
+              v-model="wizard.connectionId"
+              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+            >
+              <option value="" disabled>
+                Select…
+              </option>
+              <option
+                v-for="c in connections"
+                :key="c.id"
+                :value="c.id"
+              >
+                {{ c.name }}
+              </option>
+            </select>
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
+            <input
+              v-model="wizard.destinationTable"
+              type="text"
+              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
+              placeholder="my_table"
+            >
+            <p class="text-[10px] text-[var(--mute-soft)]">
+              Physical table: ingest.{{ wizard.destinationTable || '…' }}
+            </p>
+          </div>
+          <p
+            v-if="wizardError"
+            class="text-sm text-[var(--danger)]"
+          >
+            {{ wizardError }}
+          </p>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            class="btn-secondary !px-4 !py-2"
+            @click="closeWizard"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn-primary !px-4 !py-2"
+            @click="continueWizard"
+          >
+            Continue to canvas
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
       v-if="editorOpen"
       class="fixed inset-0 z-50 flex flex-col bg-[var(--surface)]"
     >
@@ -176,7 +290,9 @@
             >(unsaved)</span>
           </h2>
           <p class="text-xs text-[var(--mute)]">
-            Double-click Retrieve / Filter / Transform / Ingest to configure. Drag cyan handles to link nodes.
+            {{ isMergeSource
+              ? 'Double-click a node to configure. Use the palette categories for Data sources, Operators, and Storage.'
+              : 'Double-click a node to configure. Use the palette categories for Operators and Storage.' }}
           </p>
         </div>
         <input
@@ -227,7 +343,7 @@
           :disabled="editorBusy"
           @click="closeEditor"
         >
-          Cancel
+          {{ isDirty ? 'Cancel' : 'Close' }}
         </button>
         <button
           type="button"
@@ -257,9 +373,11 @@
                 ref="pipelineCanvas"
                 v-model="form.pipeline"
                 :destination-table="form.destinationTable"
+                :locked="editorBusy"
                 class="h-full min-h-0"
+                @edit-node="onEditPipelineNode"
               >
-              <template #node-config="{ node, close, updateFilter, removeFilter, updateTransform, removeTransform }">
+              <template #node-config="{ node, close, updateFilter, removeFilter, updateTransform, removeTransform, updateFetch, removeFetch, updateMerge, removeMerge, removeIngest }">
                 <div
                   v-if="node.type === 'retrieve'"
                   class="space-y-3"
@@ -297,6 +415,69 @@
                   >
                     Done
                   </button>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'fetch'"
+                  class="space-y-4"
+                >
+                  <PipelineFetchConfigPanel
+                    ref="fetchConfigPanel"
+                    :model-value="node.data || {}"
+                    :sources="items"
+                    :exclude-source-id="editingId || ''"
+                    @update:model-value="updateFetch"
+                  />
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                    <button
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeFetch"
+                    >
+                      Remove Fetch node
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'merge'"
+                  class="space-y-4"
+                >
+                  <PipelineMergeConfigPanel
+                    ref="mergeConfigPanel"
+                    :model-value="node.data || {}"
+                    :left-fields="mergeLeftFields"
+                    :right-fields="mergeRightFields"
+                    :left-info="mergeLeftInfo"
+                    :right-info="mergeRightInfo"
+                    :loading-fields="loadingMergeFields"
+                    :fields-error="mergeFieldsError"
+                    @update:model-value="updateMerge"
+                    @fetch-fields="loadMergeFields(node.id)"
+                  />
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                    <button
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeMerge"
+                    >
+                      Remove Merge node
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -365,6 +546,7 @@
                 >
                   <p class="text-xs text-[var(--mute)]">
                     Pipeline output is written to the destination table set in the header.
+                    Additional Ingest nodes can fork the same output for secondary landings (same table for now).
                   </p>
                   <div class="flex flex-col gap-1">
                     <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
@@ -378,13 +560,23 @@
                       <span class="font-mono text-[var(--accent-ink)]">ingest.{{ form.destinationTable || '…' }}</span>
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    class="btn-secondary !px-3 !py-1.5 text-sm"
-                    @click="close"
-                  >
-                    Done
-                  </button>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                    <button
+                      v-if="ingestNodeCount > 1"
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeIngest"
+                    >
+                      Remove Ingest node
+                    </button>
+                  </div>
                 </div>
               </template>
               </SourcePipelineCanvas>
@@ -416,9 +608,16 @@
 </template>
 
 <script setup>
-import { createDefaultPipeline, normalizePipeline } from '~~/shared/pipelineDefaults.js'
+import {
+  createDefaultPipeline,
+  createMergePipeline,
+  isMergePipeline,
+  normalizePipeline,
+} from '~~/shared/pipelineDefaults.js'
 import PipelineFilterConfigPanel from '~/components/pipeline/FilterConfigPanel.vue'
 import PipelineTransformConfigPanel from '~/components/pipeline/TransformConfigPanel.vue'
+import PipelineFetchConfigPanel from '~/components/pipeline/FetchConfigPanel.vue'
+import PipelineMergeConfigPanel from '~/components/pipeline/MergeConfigPanel.vue'
 
 definePageMeta({
   layout: 'app',
@@ -443,6 +642,14 @@ const busyId = ref(null)
 /** @type {import('vue').Ref<'test'|'run'|null>} */
 const busyMode = ref(null)
 const editorOpen = ref(false)
+const wizardOpen = ref(false)
+const wizardError = ref('')
+const wizard = reactive({
+  template: 'retrieve',
+  name: '',
+  connectionId: '',
+  destinationTable: '',
+})
 const editingId = ref(null)
 const saving = ref(false)
 const editorError = ref('')
@@ -455,11 +662,20 @@ const retrieveSample = ref(null)
 const loadingRetrieveSample = ref(false)
 const operatorSample = ref(null)
 const loadingOperatorSample = ref(false)
+const mergeLeftFields = ref([])
+const mergeRightFields = ref([])
+const mergeLeftInfo = ref(null)
+const mergeRightInfo = ref(null)
+const loadingMergeFields = ref(false)
+const mergeFieldsError = ref('')
+const mergeFieldsNodeId = ref('')
 /** @type {import('vue').Ref<'test'|'run'|'save'|null>} */
 const editorBusyMode = ref(null)
 const pipelineCanvas = ref(null)
 const filterConfigPanel = ref(null)
 const transformConfigPanel = ref(null)
+const fetchConfigPanel = ref(null)
+const mergeConfigPanel = ref(null)
 const savedSnapshot = ref('')
 
 const form = reactive({
@@ -469,6 +685,12 @@ const form = reactive({
   config: {},
   pipeline: createDefaultPipeline(),
 })
+
+const isMergeSource = computed(() => isMergePipeline(form.pipeline))
+
+const ingestNodeCount = computed(() =>
+  (form.pipeline?.nodes || []).filter((n) => n.type === 'ingest').length,
+)
 
 const editorBusy = computed(() => Boolean(editorBusyMode.value) || saving.value)
 
@@ -560,6 +782,8 @@ function onConnectionChange() {
 function flushEditorState() {
   filterConfigPanel.value?.flush?.()
   transformConfigPanel.value?.flush?.()
+  fetchConfigPanel.value?.flush?.()
+  mergeConfigPanel.value?.flush?.()
   pipelineCanvas.value?.flush?.()
 }
 
@@ -595,6 +819,7 @@ async function closeEditor() {
   outputSummary.value = ''
   outputBody.value = ''
   editorBusyMode.value = null
+  clearMergeFields()
 }
 
 function clearOutput() {
@@ -709,6 +934,7 @@ async function loadParentSample(nodeId) {
       body: {
         organizationId: activeOrganization.value.id,
         connectionId: form.connectionId,
+        dataSourceId: editingId.value || undefined,
         config: form.config,
         pipeline: form.pipeline,
         nodeId,
@@ -727,7 +953,110 @@ async function loadParentSample(nodeId) {
   }
 }
 
+/**
+ * @param {{ id?: string, type?: string } | null} node
+ */
+function onEditPipelineNode(node) {
+  if (node?.type === 'merge' && node.id) {
+    loadMergeFields(node.id)
+  }
+}
+
+function clearMergeFields() {
+  mergeLeftFields.value = []
+  mergeRightFields.value = []
+  mergeLeftInfo.value = null
+  mergeRightInfo.value = null
+  mergeFieldsError.value = ''
+  mergeFieldsNodeId.value = ''
+}
+
+/**
+ * Load join-key field lists from the Merge node’s two inbound parents (async).
+ * @param {string} mergeNodeId
+ */
+async function loadMergeFields(mergeNodeId) {
+  if (!activeOrganization.value?.id) {
+    mergeFieldsError.value = 'Select an organization first'
+    return
+  }
+  if (!mergeNodeId) return
+  flushEditorState()
+  await nextTick()
+  mergeFieldsNodeId.value = mergeNodeId
+  loadingMergeFields.value = true
+  mergeFieldsError.value = ''
+  try {
+    const res = await authedFetch('/api/data-sources/preview-merge-fields', {
+      method: 'POST',
+      body: {
+        organizationId: activeOrganization.value.id,
+        connectionId: form.connectionId || undefined,
+        dataSourceId: editingId.value || undefined,
+        pipeline: form.pipeline,
+        mergeNodeId,
+      },
+    })
+    if (mergeFieldsNodeId.value !== mergeNodeId) return
+    mergeLeftInfo.value = res.left || null
+    mergeRightInfo.value = res.right || null
+    mergeLeftFields.value = Array.isArray(res.left?.fields) ? res.left.fields : []
+    mergeRightFields.value = Array.isArray(res.right?.fields) ? res.right.fields : []
+    if (!mergeLeftFields.value.length && !mergeRightFields.value.length) {
+      mergeFieldsError.value = 'No fields found — run the child sources once (or check Fetch source selection), then refresh.'
+    }
+  }
+  catch (err) {
+    if (mergeFieldsNodeId.value !== mergeNodeId) return
+    mergeLeftFields.value = []
+    mergeRightFields.value = []
+    mergeLeftInfo.value = null
+    mergeRightInfo.value = null
+    mergeFieldsError.value = err?.data?.statusMessage || err?.message || 'Failed to load merge fields'
+  }
+  finally {
+    if (mergeFieldsNodeId.value === mergeNodeId) {
+      loadingMergeFields.value = false
+    }
+  }
+}
+
 function openCreate() {
+  wizardError.value = ''
+  wizard.template = 'retrieve'
+  wizard.name = ''
+  wizard.connectionId = String(route.query.connectionId || connections.value[0]?.id || '')
+  wizard.destinationTable = ''
+  wizardOpen.value = true
+}
+
+function closeWizard() {
+  wizardOpen.value = false
+  wizardError.value = ''
+}
+
+function continueWizard() {
+  wizardError.value = ''
+  const name = wizard.name.trim()
+  const connectionId = wizard.connectionId
+  const destinationTable = wizard.destinationTable.trim().toLowerCase()
+  if (!name) {
+    wizardError.value = 'Name is required'
+    return
+  }
+  if (!connectionId) {
+    wizardError.value = 'Select a connection'
+    return
+  }
+  if (!destinationTable || !/^[a-z][a-z0-9_]{0,62}$/.test(destinationTable)) {
+    wizardError.value = 'Destination must be a lowercase SQL identifier (e.g. my_table)'
+    return
+  }
+
+  const conn = connections.value.find((c) => c.id === connectionId)
+  const typeId = conn?.connector_type_id || conn?.connector_types?.id
+  const typeDef = typeId ? catalogByTypeId.value[typeId] : null
+
   editingId.value = null
   editorError.value = ''
   editorNotice.value = ''
@@ -735,11 +1064,15 @@ function openCreate() {
   outputBody.value = ''
   retrieveSample.value = null
   operatorSample.value = null
-  form.name = ''
-  form.connectionId = String(route.query.connectionId || connections.value[0]?.id || '')
-  form.destinationTable = ''
-  form.config = defaultsFromSchema(selectedType.value?.config_schema)
-  form.pipeline = createDefaultPipeline()
+  form.name = name
+  form.connectionId = connectionId
+  form.destinationTable = destinationTable
+  form.config = defaultsFromSchema(typeDef?.config_schema)
+  form.pipeline = wizard.template === 'merge'
+    ? createMergePipeline()
+    : createDefaultPipeline()
+  clearMergeFields()
+  wizardOpen.value = false
   editorOpen.value = true
   nextTick(() => {
     savedSnapshot.value = ''
@@ -758,6 +1091,7 @@ async function openEdit(row) {
   outputBody.value = ''
   retrieveSample.value = null
   operatorSample.value = null
+  clearMergeFields()
   try {
     const res = await authedFetch(`/api/data-sources/${row.id}`, {
       query: { organizationId: activeOrganization.value.id },
@@ -837,7 +1171,7 @@ async function load() {
  * @returns {Promise<boolean>}
  */
 async function saveSource(opts = {}) {
-  const shouldClose = opts.close !== false
+  const shouldClose = Boolean(opts.close)
   if (!activeOrganization.value?.id) return false
   saving.value = true
   if (!editorBusyMode.value) editorBusyMode.value = 'save'
@@ -884,9 +1218,9 @@ async function saveSource(opts = {}) {
       editorNotice.value = 'Source saved'
     }
     markSaved()
+    await load()
     if (shouldClose) {
       editorOpen.value = false
-      await load()
     }
     return true
   }

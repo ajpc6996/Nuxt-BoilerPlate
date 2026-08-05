@@ -1,14 +1,17 @@
-import { normalizePipeline } from './defaults.js'
+import { normalizePipeline, isMergePipeline } from './defaults.js'
 import { topologicalOrder, validatePipeline } from './validate.js'
 import { runFilterOperator } from './filter.js'
 import { runTransformOperator } from './transform.js'
+import { runMergeOperator } from './merge.js'
 
 /**
- * Run post-retrieve pipeline operators (Filter, Transform, …) then return rows for Ingest.
+ * Run pipeline operators then return rows for Ingest.
+ * Retrieve pipelines seed from retrievedRows; merge pipelines seed from seedOutputs (Fetch ids).
  *
  * @param {{
  *   pipeline: unknown,
- *   retrievedRows: Record<string, unknown>[],
+ *   retrievedRows?: Record<string, unknown>[],
+ *   seedOutputs?: Record<string, Record<string, unknown>[]>,
  *   retrieveMeta?: Record<string, unknown>,
  *   debug?: boolean,
  *   untilNodeId?: string,
@@ -19,6 +22,7 @@ export function executePipeline(opts) {
   const pipeline = normalizePipeline(opts.pipeline)
   const debug = Boolean(opts.debug ?? pipeline.debug)
   const untilNodeId = opts.untilNodeId ? String(opts.untilNodeId) : null
+  const merge = isMergePipeline(pipeline)
 
   if (!opts.skipValidation) {
     const validation = validatePipeline(pipeline)
@@ -37,32 +41,93 @@ export function executePipeline(opts) {
   /** @type {Array<Record<string, unknown>>} */
   const steps = []
 
-  const retrieveNode = pipeline.nodes.find((n) => n.type === 'retrieve')
-  if (!retrieveNode) {
-    throw createError({ statusCode: 400, statusMessage: 'Pipeline must have a Retrieve node' })
+  /** @type {string[]} */
+  let rootIds = []
+
+  if (merge) {
+    const seed = opts.seedOutputs && typeof opts.seedOutputs === 'object' ? opts.seedOutputs : {}
+    const fetchNodes = pipeline.nodes.filter((n) => n.type === 'fetch')
+    for (const node of fetchNodes) {
+      const rows = Array.isArray(seed[node.id]) ? seed[node.id] : []
+      outputs[node.id] = rows
+      rootIds.push(node.id)
+      steps.push({
+        nodeId: node.id,
+        type: 'fetch',
+        in: 0,
+        out: rows.length,
+        sample: debug ? sampleRows(rows) : undefined,
+        meta: {
+          sourceId: node.data?.sourceId || null,
+          mode: node.data?.mode === 'refresh' ? 'refresh' : 'last_ingest',
+        },
+      })
+      if (untilNodeId === node.id) {
+        return finish(outputs, steps, rootIds, debug, untilNodeId)
+      }
+    }
   }
-  outputs[retrieveNode.id] = Array.isArray(opts.retrievedRows) ? opts.retrievedRows : []
+  else {
+    const retrieveNode = pipeline.nodes.find((n) => n.type === 'retrieve')
+    if (!retrieveNode) {
+      throw createError({ statusCode: 400, statusMessage: 'Pipeline must have a Retrieve node' })
+    }
+    outputs[retrieveNode.id] = Array.isArray(opts.retrievedRows) ? opts.retrievedRows : []
+    rootIds = [retrieveNode.id]
 
-  steps.push({
-    nodeId: retrieveNode.id,
-    type: 'retrieve',
-    in: 0,
-    out: outputs[retrieveNode.id].length,
-    sample: debug ? sampleRows(outputs[retrieveNode.id]) : undefined,
-    meta: opts.retrieveMeta || {},
-  })
+    steps.push({
+      nodeId: retrieveNode.id,
+      type: 'retrieve',
+      in: 0,
+      out: outputs[retrieveNode.id].length,
+      sample: debug ? sampleRows(outputs[retrieveNode.id]) : undefined,
+      meta: opts.retrieveMeta || {},
+    })
 
-  if (untilNodeId === retrieveNode.id) {
-    return finish(outputs, steps, retrieveNode.id, debug, untilNodeId)
+    if (untilNodeId === retrieveNode.id) {
+      return finish(outputs, steps, rootIds, debug, untilNodeId)
+    }
   }
 
   for (const nodeId of order) {
     const node = pipeline.nodes.find((n) => n.id === nodeId)
-    if (!node || node.type === 'retrieve') continue
+    if (!node || node.type === 'retrieve' || node.type === 'fetch') continue
+
+    if (node.type === 'merge') {
+      const parents = pipeline.edges
+        .filter((e) => e.target === node.id)
+        .map((e) => e.source)
+        .sort()
+      if (parents.length !== 2 || !(parents[0] in outputs) || !(parents[1] in outputs)) {
+        continue
+      }
+      const leftRows = outputs[parents[0]] || []
+      const rightRows = outputs[parents[1]] || []
+      const result = runMergeOperator(leftRows, rightRows, node.data || {})
+      if (result.meta?.error) {
+        throw createError({ statusCode: 400, statusMessage: result.meta.error })
+      }
+      outputs[node.id] = result.rows
+      steps.push({
+        nodeId: node.id,
+        type: 'merge',
+        in: result.meta.inLeft + result.meta.inRight,
+        out: result.meta.out,
+        meta: {
+          ...result.meta,
+          leftNodeId: parents[0],
+          rightNodeId: parents[1],
+        },
+        sample: debug ? sampleRows(result.rows) : undefined,
+      })
+      if (untilNodeId === node.id) {
+        return finish(outputs, steps, rootIds, debug, untilNodeId)
+      }
+      continue
+    }
 
     const parentEdge = pipeline.edges.find((e) => e.target === node.id)
     if (!parentEdge || !(parentEdge.source in outputs)) {
-      // Skip unreachable / unconnected operators during partial preview
       continue
     }
 
@@ -80,7 +145,7 @@ export function executePipeline(opts) {
         sample: debug ? sampleRows(result.rows) : undefined,
       })
       if (untilNodeId === node.id) {
-        return finish(outputs, steps, retrieveNode.id, debug, untilNodeId)
+        return finish(outputs, steps, rootIds, debug, untilNodeId)
       }
       continue
     }
@@ -98,7 +163,7 @@ export function executePipeline(opts) {
         sample: debug ? sampleRows(result.rows) : undefined,
       })
       if (untilNodeId === node.id) {
-        return finish(outputs, steps, retrieveNode.id, debug, untilNodeId)
+        return finish(outputs, steps, rootIds, debug, untilNodeId)
       }
       continue
     }
@@ -114,7 +179,7 @@ export function executePipeline(opts) {
         sample: debug ? sampleRows(input) : undefined,
       })
       if (untilNodeId === node.id) {
-        return finish(outputs, steps, retrieveNode.id, debug, untilNodeId)
+        return finish(outputs, steps, rootIds, debug, untilNodeId)
       }
     }
   }
@@ -122,32 +187,34 @@ export function executePipeline(opts) {
   if (untilNodeId && !(untilNodeId in outputs)) {
     throw createError({
       statusCode: 400,
-      statusMessage: 'Could not reach parent node — check links from Retrieve',
+      statusMessage: merge
+        ? 'Could not reach parent node — check links from Fetch / Merge'
+        : 'Could not reach parent node — check links from Retrieve',
     })
   }
 
-  return finish(outputs, steps, retrieveNode.id, debug, untilNodeId)
+  return finish(outputs, steps, rootIds, debug, untilNodeId)
 }
 
 /**
  * @param {Record<string, Record<string, unknown>[]>} outputs
  * @param {Array<Record<string, unknown>>} steps
- * @param {string} retrieveId
+ * @param {string[]} rootIds
  * @param {boolean} debug
  * @param {string | null} untilNodeId
  */
-function finish(outputs, steps, retrieveId, debug, untilNodeId) {
+function finish(outputs, steps, rootIds, debug, untilNodeId) {
   const ingestStep = steps.find((s) => s.type === 'ingest')
   const finalKey = untilNodeId || ingestStep?.nodeId
   const finalRows = (finalKey && outputs[finalKey]) || []
-  const retrieveCount = outputs[retrieveId]?.length || 0
+  const retrieved = rootIds.reduce((sum, id) => sum + (outputs[id]?.length || 0), 0)
 
   return {
     rows: finalRows,
     summary: {
-      retrieved: retrieveCount,
+      retrieved,
       afterPipeline: finalRows.length,
-      filteredOut: Math.max(0, retrieveCount - finalRows.length),
+      filteredOut: Math.max(0, retrieved - finalRows.length),
       written: 0,
     },
     steps,

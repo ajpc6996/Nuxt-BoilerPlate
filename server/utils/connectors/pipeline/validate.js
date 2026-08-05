@@ -1,12 +1,24 @@
 import { FILTER_OPS } from './defaults.js'
+import { isMergePipeline } from './defaults.js'
 import { validateTransformConfig } from './transform.js'
+import { validateMergeConfig } from './merge.js'
 
 /**
  * Validate pipeline graph for execution.
- * @param {{ nodes: Array, edges: Array }} pipeline
+ * @param {{ nodes: Array, edges: Array, kind?: string }} pipeline
  * @returns {{ ok: boolean, error?: string }}
  */
 export function validatePipeline(pipeline) {
+  if (isMergePipeline(pipeline)) {
+    return validateMergePipeline(pipeline)
+  }
+  return validateRetrievePipeline(pipeline)
+}
+
+/**
+ * @param {{ nodes: Array, edges: Array }} pipeline
+ */
+function validateRetrievePipeline(pipeline) {
   const nodes = pipeline?.nodes || []
   const edges = pipeline?.edges || []
 
@@ -16,10 +28,157 @@ export function validatePipeline(pipeline) {
   if (retrieves.length !== 1) {
     return { ok: false, error: 'Pipeline must have exactly one Retrieve node' }
   }
-  if (ingests.length !== 1) {
-    return { ok: false, error: 'Pipeline must have exactly one Ingest node' }
+  if (ingests.length < 1) {
+    return { ok: false, error: 'Pipeline must have at least one Ingest node' }
   }
 
+  const edgeCheck = validateEdges(nodes, edges)
+  if (!edgeCheck.ok) return edgeCheck
+
+  const allowed = new Set(['retrieve', 'filter', 'transform', 'ingest'])
+  for (const n of nodes) {
+    if (!allowed.has(n.type)) {
+      return { ok: false, error: `Unsupported node type: ${n.type}` }
+    }
+  }
+
+  const ingestCheck = validateIngestNodes(ingests, edges)
+  if (!ingestCheck.ok) return ingestCheck
+
+  const retrieveId = retrieves[0].id
+  if (!edges.some((e) => e.source === retrieveId)) {
+    return { ok: false, error: 'Retrieve must connect to another node' }
+  }
+
+  const midCheck = validateMidChain(nodes, edges)
+  if (!midCheck.ok) return midCheck
+
+  return validateReachability(nodes, edges, [retrieveId], ingests.map((n) => n.id), 'Retrieve')
+}
+
+/**
+ * @param {{ nodes: Array, edges: Array }} pipeline
+ */
+function validateMergePipeline(pipeline) {
+  const nodes = pipeline?.nodes || []
+  const edges = pipeline?.edges || []
+
+  const fetches = nodes.filter((n) => n.type === 'fetch')
+  const merges = nodes.filter((n) => n.type === 'merge')
+  const retrieves = nodes.filter((n) => n.type === 'retrieve')
+  const ingests = nodes.filter((n) => n.type === 'ingest')
+
+  if (retrieves.length) {
+    return { ok: false, error: 'Merge pipelines cannot include a Retrieve node' }
+  }
+  if (fetches.length < 2) {
+    return { ok: false, error: 'Merge pipeline needs at least two Fetch nodes' }
+  }
+  if (merges.length < 1) {
+    return { ok: false, error: 'Merge pipeline needs at least one Merge node' }
+  }
+  if (ingests.length < 1) {
+    return { ok: false, error: 'Pipeline must have at least one Ingest node' }
+  }
+
+  const edgeCheck = validateEdges(nodes, edges)
+  if (!edgeCheck.ok) return edgeCheck
+
+  const allowed = new Set(['fetch', 'merge', 'filter', 'transform', 'ingest'])
+  for (const n of nodes) {
+    if (!allowed.has(n.type)) {
+      return { ok: false, error: `Unsupported node type: ${n.type}` }
+    }
+  }
+
+  for (const n of fetches) {
+    const inbound = edges.filter((e) => e.target === n.id)
+    const outbound = edges.filter((e) => e.source === n.id)
+    if (inbound.length) {
+      return { ok: false, error: `Fetch “${n.id}” cannot have incoming connections` }
+    }
+    if (outbound.length < 1) {
+      return { ok: false, error: `Fetch “${n.id}” needs an outgoing connection` }
+    }
+    if (!String(n.data?.sourceId || '').trim()) {
+      return { ok: false, error: `Fetch “${n.id}” needs a source selected` }
+    }
+    const mode = n.data?.mode || 'last_ingest'
+    if (mode !== 'last_ingest' && mode !== 'refresh') {
+      return { ok: false, error: `Fetch “${n.id}” has invalid mode “${mode}”` }
+    }
+  }
+
+  for (const n of merges) {
+    const inbound = edges.filter((e) => e.target === n.id)
+    const outbound = edges.filter((e) => e.source === n.id)
+    if (inbound.length !== 2) {
+      return { ok: false, error: `Merge “${n.id}” needs exactly two incoming connections` }
+    }
+    if (outbound.length < 1) {
+      return { ok: false, error: `Merge “${n.id}” needs an outgoing connection` }
+    }
+    const err = validateMergeConfig(n.data || {}, n.id)
+    if (err) return { ok: false, error: err }
+  }
+
+  const midCheck = validateMidChain(nodes, edges)
+  if (!midCheck.ok) return midCheck
+
+  const ingestCheck = validateIngestNodes(ingests, edges)
+  if (!ingestCheck.ok) return ingestCheck
+
+  // Every node reachable from at least one Fetch
+  const roots = fetches.map((f) => f.id)
+  const reachable = new Set(roots)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const e of edges) {
+      if (reachable.has(e.source) && !reachable.has(e.target)) {
+        reachable.add(e.target)
+        changed = true
+      }
+    }
+  }
+  for (const n of nodes) {
+    if (!reachable.has(n.id)) {
+      return { ok: false, error: `Node “${n.id}” is not reachable from a Fetch` }
+    }
+  }
+  for (const n of ingests) {
+    if (!reachable.has(n.id)) {
+      return { ok: false, error: `Ingest “${n.id}” is not reachable from Fetch nodes` }
+    }
+  }
+
+  const order = topologicalOrder(nodes, edges)
+  if (!order) {
+    return { ok: false, error: 'Pipeline has a cycle; connect left-to-right only' }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * @param {Array} ingests
+ * @param {Array} edges
+ */
+function validateIngestNodes(ingests, edges) {
+  for (const n of ingests) {
+    const inbound = edges.filter((e) => e.target === n.id)
+    if (inbound.length !== 1) {
+      return { ok: false, error: `Ingest “${n.id}” needs exactly one incoming connection` }
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * @param {Array} nodes
+ * @param {Array} edges
+ */
+function validateEdges(nodes, edges) {
   const ids = new Set(nodes.map((n) => n.id))
   for (const e of edges) {
     if (!ids.has(e.source) || !ids.has(e.target)) {
@@ -29,25 +188,14 @@ export function validatePipeline(pipeline) {
       return { ok: false, error: 'Self-loops are not allowed' }
     }
   }
+  return { ok: true }
+}
 
-  const allowed = new Set(['retrieve', 'filter', 'transform', 'ingest'])
-  for (const n of nodes) {
-    if (!allowed.has(n.type)) {
-      return { ok: false, error: `Unsupported node type: ${n.type}` }
-    }
-  }
-
-  const ingestId = ingests[0].id
-  const intoIngest = edges.filter((e) => e.target === ingestId)
-  if (intoIngest.length !== 1) {
-    return { ok: false, error: 'Ingest must have exactly one incoming connection' }
-  }
-
-  const retrieveId = retrieves[0].id
-  if (!edges.some((e) => e.source === retrieveId)) {
-    return { ok: false, error: 'Retrieve must connect to another node' }
-  }
-
+/**
+ * @param {Array} nodes
+ * @param {Array} edges
+ */
+function validateMidChain(nodes, edges) {
   for (const n of nodes.filter((x) => x.type === 'filter' || x.type === 'transform')) {
     const label = n.type === 'filter' ? 'Filter' : 'Transform'
     const inbound = edges.filter((e) => e.target === n.id)
@@ -76,13 +224,24 @@ export function validatePipeline(pipeline) {
       if (err) return { ok: false, error: err }
     }
   }
+  return { ok: true }
+}
 
+/**
+ * @param {Array} nodes
+ * @param {Array} edges
+ * @param {string[]} rootIds
+ * @param {string[]} ingestIds
+ * @param {string} rootLabel
+ */
+function validateReachability(nodes, edges, rootIds, ingestIds, rootLabel) {
   const order = topologicalOrder(nodes, edges)
   if (!order) {
     return { ok: false, error: 'Pipeline has a cycle; connect left-to-right only' }
   }
 
-  const reachable = new Set([retrieveId])
+  const roots = Array.isArray(rootIds) ? rootIds : [rootIds]
+  const reachable = new Set(roots)
   let changed = true
   while (changed) {
     changed = false
@@ -95,11 +254,13 @@ export function validatePipeline(pipeline) {
   }
   for (const n of nodes) {
     if (!reachable.has(n.id)) {
-      return { ok: false, error: `Node “${n.id}” is not reachable from Retrieve` }
+      return { ok: false, error: `Node “${n.id}” is not reachable from ${rootLabel}` }
     }
   }
-  if (!reachable.has(ingestId)) {
-    return { ok: false, error: 'Ingest is not reachable from Retrieve' }
+  for (const ingestId of (Array.isArray(ingestIds) ? ingestIds : [ingestIds])) {
+    if (!reachable.has(ingestId)) {
+      return { ok: false, error: `Ingest is not reachable from ${rootLabel}` }
+    }
   }
 
   return { ok: true }

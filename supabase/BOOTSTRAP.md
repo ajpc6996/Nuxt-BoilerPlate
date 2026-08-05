@@ -157,3 +157,17 @@ Each Source has a canvas: **Retrieve → (Filter | Transform)* → Ingest**.
 - Canvas **Auto layout** aligns nodes by chain depth; default zoom is 75%
 - **Test** never writes; returns retrieved vs kept counts (+ step samples)
 - **Run** writes pipeline output to `ingest.<destination>`
+
+### Merge sources (multi-input)
+
+Apply `20260805140000_ingest_read_rows.sql` (RPC `ingest_read_rows` for last-ingest reads).
+
+Create via **Add** → template **Merge**. Canvas: **Fetch ×2+ → Merge → (Filter | Transform)* → Ingest**.
+
+- Each **Fetch** picks an existing source
+- Default load mode: **Last ingest table** (`ingest.<child_destination>`)
+- Optional: **Refresh now** (re-runs the child source when the merge runs)
+- Fetch inputs load in parallel (`Promise.all`) so refresh work is non-blocking across branches
+- **Merge** is an inner join on configured key pairs (exactly two inbound edges; chain Merges for 3+)
+- Output fields are prefixed (`a_`, `b_` by default) to avoid collisions
+- Cycles (A merges B merges A) are rejected

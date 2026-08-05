@@ -1,6 +1,9 @@
 export {
   createDefaultPipeline,
+  createMergePipeline,
+  isMergePipeline,
   normalizePipeline,
+  FETCH_MODES,
   FILTER_OPS,
   TRIM_MODES,
   CASE_STYLES,
