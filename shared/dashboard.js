@@ -214,6 +214,7 @@ export function normalizeDataConfig(raw) {
       }))
     : []
   const seriesField = cfg.seriesField ? String(cfg.seriesField).trim() : ''
+  const kpiTrendField = cfg.kpiTrendField ? String(cfg.kpiTrendField).trim() : ''
   const limitRaw = Number(cfg.limit)
   const limit = Number.isFinite(limitRaw) && limitRaw > 0
     ? Math.min(Math.floor(limitRaw), 5000)
@@ -224,6 +225,8 @@ export function normalizeDataConfig(raw) {
     dimensions,
     metrics,
     seriesField: seriesField || null,
+    /** Optional period/category field for KPI sparkline + delta. */
+    kpiTrendField: kpiTrendField || null,
     limit,
     orderBy: normalizeOrderBy(cfg.orderBy),
   }
@@ -239,6 +242,7 @@ export function createEmptyDataConfig() {
     dimensions: [],
     metrics: [{ field: '*', agg: 'count', as: 'value' }],
     seriesField: null,
+    kpiTrendField: null,
     limit: null,
     orderBy: normalizeOrderBy({ mode: 'none', dir: 'desc' }),
   }
@@ -259,8 +263,18 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
     : null
 
   if (widgetType === 'kpi' || widgetType === 'gauge') {
-    const value = Number(list[0]?.[metricAs]) || 0
+    const metricKey = metricAs
+    const trendDim = dataConfig.kpiTrendField
+      ? String(dataConfig.kpiTrendField).replace('.', '_')
+      : dim0
+    const showSparkline = Boolean(displayConfig.showSparkline)
+    const showDelta = Boolean(displayConfig.showDelta)
+    const prefix = String(displayConfig.kpiPrefix || '')
+    const suffix = String(displayConfig.kpiSuffix || '')
+    const format = displayConfig.kpiFormat === 'compact' ? 'compact' : 'number'
+
     if (widgetType === 'gauge') {
+      const value = Number(list[0]?.[metricKey]) || 0
       return {
         value,
         series: [
@@ -270,7 +284,41 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
         ],
       }
     }
-    return { value }
+
+    // Trend rows (period × metric) for sparkline / delta.
+    if ((showSparkline || showDelta) && list.length > 0 && trendDim) {
+      const sparkline = list.map((row, i) => ({
+        period: String(row[trendDim] ?? i + 1),
+        value: Number(row[metricKey]) || 0,
+      }))
+      const values = sparkline.map((p) => p.value)
+      const total = values.reduce((sum, n) => sum + n, 0)
+      const current = values[values.length - 1] ?? 0
+      const prior = values.length > 1 ? values[values.length - 2] : null
+      let delta = null
+      if (showDelta && prior != null) {
+        if (prior === 0) delta = current === 0 ? 0 : 100
+        else delta = Math.round(((current - prior) / Math.abs(prior)) * 1000) / 10
+      }
+      return {
+        value: total,
+        delta: showDelta ? delta : null,
+        sparkline: showSparkline ? sparkline : null,
+        prefix,
+        suffix,
+        format,
+      }
+    }
+
+    const value = Number(list[0]?.[metricKey]) || 0
+    return {
+      value,
+      delta: null,
+      sparkline: null,
+      prefix,
+      suffix,
+      format,
+    }
   }
 
   if (widgetType === 'pie' || widgetType === 'donut') {

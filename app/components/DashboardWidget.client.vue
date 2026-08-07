@@ -67,29 +67,51 @@
               </option>
             </select>
           </label>
-          <template v-if="supportsLegendControls && canConfigure">
+          <template v-if="supportsLegendControls">
             <button
               type="button"
-              class="rounded border border-[var(--border)] px-1.5 py-1 text-[10px] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+              class="rounded border px-1.5 py-1 text-[10px] transition-colors"
+              :class="displayConfig.showLegend
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+                : 'border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]'"
               :title="displayConfig.showLegend ? 'Hide legend' : 'Show legend'"
+              :aria-pressed="displayConfig.showLegend"
               @click.stop="toggleDisplayFlag('showLegend')"
             >
-              {{ displayConfig.showLegend ? 'Legend' : 'No legend' }}
+              Legend
             </button>
             <button
+              v-if="supportsMarkerControls"
               type="button"
-              class="rounded border border-[var(--border)] px-1.5 py-1 text-[10px] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+              class="rounded border px-1.5 py-1 text-[10px] transition-colors"
+              :class="displayConfig.showSeriesIndicators
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+                : 'border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]'"
               :title="displayConfig.showSeriesIndicators ? 'Hide series markers' : 'Show series markers'"
+              :aria-pressed="displayConfig.showSeriesIndicators"
               @click.stop="toggleDisplayFlag('showSeriesIndicators')"
             >
-              {{ displayConfig.showSeriesIndicators ? 'Markers' : 'No markers' }}
+              Markers
+            </button>
+            <button
+              v-else-if="supportsLabelControls"
+              type="button"
+              class="rounded border px-1.5 py-1 text-[10px] transition-colors"
+              :class="displayConfig.showSeriesIndicators
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+                : 'border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]'"
+              :title="displayConfig.showSeriesIndicators ? 'Hide slice labels' : 'Show slice labels'"
+              :aria-pressed="displayConfig.showSeriesIndicators"
+              @click.stop="toggleDisplayFlag('showSeriesIndicators')"
+            >
+              Labels
             </button>
           </template>
         </div>
       </header>
 
       <div
-        class="flex min-h-0 flex-1 flex-col p-2 sm:p-3"
+        class="flex min-h-0 flex-1 flex-col p-0.5 sm:p-1"
         :class="chartToolsEnabled ? 'overflow-visible' : 'overflow-hidden'"
       >
         <WidgetInfoCard
@@ -98,6 +120,11 @@
           :id="widget.id"
           label=""
           :value="kpiValue"
+          :prefix="kpiPrefix"
+          :suffix="kpiSuffix"
+          :format="kpiFormat"
+          :delta="kpiDelta"
+          :sparkline="kpiSparkline"
           :active="isActive"
           centered
           fill
@@ -150,6 +177,7 @@
           :show-legend="displayConfig.showLegend"
           :show-series-indicators="displayConfig.showSeriesIndicators"
           :show-tools="chartToolsEnabled"
+          fill
           @select="onPieSelect"
         />
         <WidgetDonut
@@ -162,6 +190,7 @@
           :show-legend="displayConfig.showLegend"
           :show-series-indicators="displayConfig.showSeriesIndicators"
           :show-tools="chartToolsEnabled"
+          fill
           @select="onPieSelect"
         />
         <div
@@ -263,6 +292,16 @@ const supportsLegendControls = computed(() =>
   ['line', 'bar', 'pie', 'donut'].includes(effectiveType.value),
 )
 
+/** Line/bar series markers (dots / bar value labels). */
+const supportsMarkerControls = computed(() =>
+  ['line', 'bar'].includes(effectiveType.value),
+)
+
+/** Pie/donut slice name/percentage labels. */
+const supportsLabelControls = computed(() =>
+  ['pie', 'donut'].includes(effectiveType.value),
+)
+
 /** Type dropdown while configuring, or when display_config asks to show type. */
 const showTypeSelect = computed(() => {
   if (availableTypes.value.length <= 1) return false
@@ -290,6 +329,24 @@ const kpiValue = computed(() => {
   }
   return 0
 })
+
+const kpiDelta = computed(() => {
+  if (!displayConfig.value.showDelta) return null
+  const d = dataset.value?.delta
+  return typeof d === 'number' && Number.isFinite(d) ? d : null
+})
+
+const kpiSparkline = computed(() => {
+  if (!displayConfig.value.showSparkline) return null
+  const spark = dataset.value?.sparkline
+  return Array.isArray(spark) && spark.length ? spark : null
+})
+
+const kpiPrefix = computed(() => String(displayConfig.value.kpiPrefix || ''))
+const kpiSuffix = computed(() => String(displayConfig.value.kpiSuffix || ''))
+const kpiFormat = computed(() =>
+  displayConfig.value.kpiFormat === 'compact' ? 'compact' : 'number',
+)
 
 const lineDataset = computed(() => {
   if (dataset.value?.dataset) return dataset.value.dataset

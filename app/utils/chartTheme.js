@@ -107,3 +107,37 @@ export function mergeChartConfig(target, source) {
   }
   return out
 }
+
+/**
+ * Compact XY plot padding for dashboard fill widgets.
+ * @param {{ manyCategories?: boolean, showLegend?: boolean, compact?: boolean }} [opts]
+ */
+export function xyFillPadding(opts = {}) {
+  const many = Boolean(opts.manyCategories)
+  const legend = opts.showLegend !== false
+  const compact = opts.compact !== false
+  if (!compact) {
+    return {
+      top: 12,
+      right: 16,
+      bottom: many ? 64 : 32,
+      left: 8,
+    }
+  }
+  return {
+    top: 2,
+    right: 4,
+    bottom: many ? 48 : (legend ? 8 : 4),
+    left: 2,
+  }
+}
+
+/**
+ * Donut/pie radius — larger when outer labels are off so the chart fills the tile.
+ * Keep within vue-data-ui's safe range (clamped to ~0.5).
+ * @param {{ showSeriesIndicators?: boolean, pie?: boolean }} [opts]
+ */
+export function donutRadiusRatio(opts = {}) {
+  if (opts.showSeriesIndicators) return opts.pie ? 0.34 : 0.3
+  return opts.pie ? 0.42 : 0.4
+}

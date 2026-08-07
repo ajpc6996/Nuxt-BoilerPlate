@@ -226,7 +226,7 @@
               :dashboard-id="dash.id"
               :filters="filterPayload"
               :locked="locked"
-              :can-configure="false"
+              :can-configure="canConfigure"
               :refresh-nonce="refreshNonce"
               @filter="onWidgetFilter"
               @type-change="onTypeChange"

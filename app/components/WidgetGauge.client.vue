@@ -13,9 +13,10 @@
   </WidgetPanel>
   <div
     v-else
-    class="mx-auto flex h-full min-h-0 w-full max-w-md items-center justify-center"
+    class="mx-auto flex h-full min-h-0 w-full items-center justify-center"
   >
     <VueUiGauge
+      class="h-full w-full max-h-full"
       :dataset="dataset"
       :config="mergedConfig"
     />

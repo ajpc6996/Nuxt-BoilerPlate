@@ -54,80 +54,96 @@
     </div>
 
     <template v-else>
-      <section class="panel mt-8 space-y-4 px-5 py-4">
-        <h2 class="text-sm font-semibold text-[var(--ink)]">
-          Dashboard
-        </h2>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Name</label>
-            <input
-              v-model="form.name"
-              type="text"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-            >
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Visibility</label>
-            <select
-              v-model="form.visibility"
-              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-            >
-              <option value="private">Private</option>
-              <option value="role">Role-limited</option>
-              <option value="public">Public in org</option>
-            </select>
-          </div>
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-[var(--mute)]">Description</label>
-          <textarea
-            v-model="form.description"
-            rows="2"
-            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-          />
-        </div>
-        <div
-          v-if="form.visibility === 'role'"
-          class="flex flex-col gap-2"
+      <section class="panel mt-6 overflow-hidden">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[var(--surface-raised)]"
+          :aria-expanded="settingsOpen"
+          @click="settingsOpen = !settingsOpen"
         >
-          <label class="text-xs font-medium text-[var(--mute)]">Roles that can view</label>
-          <div class="flex flex-wrap gap-2">
-            <label
-              v-for="role in orgRoles"
-              :key="role.id"
-              class="flex items-center gap-2 rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--ink)]"
-            >
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-[var(--ink)]">
+              Dashboard settings
+            </p>
+            <p class="truncate text-[11px] text-[var(--mute)]">
+              {{ form.name || 'Untitled' }}
+              · {{ form.visibility }}
+              <span v-if="toolsMenuEnabled"> · tools on</span>
+            </p>
+          </div>
+          <span
+            class="shrink-0 text-xs text-[var(--mute)]"
+            aria-hidden="true"
+          >{{ settingsOpen ? '▾' : '▸' }}</span>
+        </button>
+
+        <div
+          v-show="settingsOpen"
+          class="space-y-3 border-t border-[var(--border-soft)] px-4 py-3"
+        >
+          <div class="grid gap-2 sm:grid-cols-3">
+            <div class="flex flex-col gap-0.5 sm:col-span-1">
+              <label class="text-[10px] font-medium uppercase tracking-wide text-[var(--mute-soft)]">Name</label>
               <input
-                v-model="form.roleIds"
-                type="checkbox"
-                :value="role.id"
-                class="accent-[var(--accent)]"
+                v-model="form.name"
+                type="text"
+                class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
               >
-              {{ role.name }}
+            </div>
+            <div class="flex flex-col gap-0.5">
+              <label class="text-[10px] font-medium uppercase tracking-wide text-[var(--mute-soft)]">Visibility</label>
+              <select
+                v-model="form.visibility"
+                class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+              >
+                <option value="private">Private</option>
+                <option value="role">Role-limited</option>
+                <option value="public">Public in org</option>
+              </select>
+            </div>
+            <label class="flex items-end gap-2 pb-1.5 text-xs text-[var(--ink)]">
+              <input
+                v-model="toolsMenuEnabled"
+                type="checkbox"
+                class="rounded border-[var(--border)]"
+              >
+              Enable view tools menu
             </label>
           </div>
-        </div>
-
-        <div class="space-y-2 rounded-md border border-[var(--border-soft)] p-3">
-          <p class="text-xs font-medium text-[var(--mute)]">
-            View toolbar tools
-          </p>
-          <p class="text-[10px] text-[var(--mute-soft)]">
-            When enabled: tools menu beside full-screen on the view page (Download PNG / Annotate). Click Save above to persist. Chart toolbars are enabled per widget in the widget editor.
-          </p>
-          <label class="flex items-center gap-2 text-sm text-[var(--ink)]">
+          <div class="flex flex-col gap-0.5">
+            <label class="text-[10px] font-medium uppercase tracking-wide text-[var(--mute-soft)]">Description</label>
             <input
-              v-model="toolsMenuEnabled"
-              type="checkbox"
-              class="rounded border-[var(--border)]"
+              v-model="form.description"
+              type="text"
+              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+              placeholder="Optional — shown via info on the view"
             >
-            Enable tools menu
-          </label>
+          </div>
+          <div
+            v-if="form.visibility === 'role'"
+            class="flex flex-col gap-1.5"
+          >
+            <label class="text-[10px] font-medium uppercase tracking-wide text-[var(--mute-soft)]">Roles that can view</label>
+            <div class="flex flex-wrap gap-1.5">
+              <label
+                v-for="role in orgRoles"
+                :key="role.id"
+                class="flex items-center gap-1.5 rounded border border-[var(--border)] px-1.5 py-0.5 text-[11px] text-[var(--ink)]"
+              >
+                <input
+                  v-model="form.roleIds"
+                  type="checkbox"
+                  :value="role.id"
+                  class="accent-[var(--accent)]"
+                >
+                {{ role.name }}
+              </label>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="text-sm font-semibold text-[var(--ink)]">
@@ -319,6 +335,93 @@
               >
               Show series markers / data labels
             </label>
+          </div>
+
+          <div
+            v-if="widgetForm.widgetType === 'kpi'"
+            class="space-y-2 rounded-md border border-[var(--border-soft)] p-3"
+          >
+            <p class="text-xs font-medium text-[var(--mute)]">
+              KPI card options
+            </p>
+            <p class="text-[10px] text-[var(--mute-soft)]">
+              Match the demo Revenue card: optional % change and sparkline. Pick a trend field (period/category) when enabling those.
+            </p>
+            <div class="grid gap-2 sm:grid-cols-3">
+              <div class="flex flex-col gap-0.5">
+                <label class="text-[10px] text-[var(--mute-soft)]">Prefix</label>
+                <input
+                  v-model="widgetForm.displayConfig.kpiPrefix"
+                  type="text"
+                  maxlength="16"
+                  placeholder="$"
+                  class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+                >
+              </div>
+              <div class="flex flex-col gap-0.5">
+                <label class="text-[10px] text-[var(--mute-soft)]">Suffix</label>
+                <input
+                  v-model="widgetForm.displayConfig.kpiSuffix"
+                  type="text"
+                  maxlength="16"
+                  placeholder="%"
+                  class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+                >
+              </div>
+              <div class="flex flex-col gap-0.5">
+                <label class="text-[10px] text-[var(--mute-soft)]">Number format</label>
+                <select
+                  v-model="widgetForm.displayConfig.kpiFormat"
+                  class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+                >
+                  <option value="number">Full</option>
+                  <option value="compact">Compact (12.4K)</option>
+                </select>
+              </div>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-[var(--ink)]">
+              <input
+                v-model="widgetForm.displayConfig.showDelta"
+                type="checkbox"
+                class="rounded border-[var(--border)]"
+              >
+              Show % change vs prior period
+            </label>
+            <label class="flex items-center gap-2 text-sm text-[var(--ink)]">
+              <input
+                v-model="widgetForm.displayConfig.showSparkline"
+                type="checkbox"
+                class="rounded border-[var(--border)]"
+              >
+              Show sparkline
+            </label>
+            <div
+              v-if="widgetForm.displayConfig.showDelta || widgetForm.displayConfig.showSparkline"
+              class="flex flex-col gap-0.5"
+            >
+              <label class="text-[10px] text-[var(--mute-soft)]">Trend field (period / category)</label>
+              <select
+                v-model="widgetForm.dataConfig.kpiTrendField"
+                class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+              >
+                <option value="">
+                  Select…
+                </option>
+                <option
+                  v-for="f in allQualifiedFields"
+                  :key="f"
+                  :value="f"
+                >
+                  {{ f }}
+                </option>
+              </select>
+              <p
+                v-if="!widgetForm.dataConfig.kpiTrendField"
+                class="text-[10px] text-[var(--danger)]"
+              >
+                Required for delta / sparkline.
+              </p>
+            </div>
           </div>
 
           <div class="space-y-2">
@@ -784,6 +887,8 @@ const form = reactive({
 const toolsMenuEnabled = ref(false)
 /** Top-level flag — nested displayConfig.showTools checkbox was not reliably persisting. */
 const widgetToolsEnabled = ref(false)
+/** Dashboard name / visibility / tools panel — collapsed by default for canvas space. */
+const settingsOpen = ref(false)
 const widgetEditorOpen = ref(false)
 const editingWidgetId = ref(null)
 const widgetError = ref('')
@@ -1186,14 +1291,20 @@ function openWidgetEditor(widget) {
     widgetForm.dataConfig.orderBy.left = widgetForm.dataConfig.orderBy.left || ''
     widgetForm.dataConfig.orderBy.right = widgetForm.dataConfig.orderBy.right || ''
   }
+  if (widgetForm.dataConfig.kpiTrendField == null) {
+    widgetForm.dataConfig.kpiTrendField = ''
+  }
   widgetEditorOpen.value = true
   refreshAllFields()
 }
 
 async function saveWidget() {
   widgetError.value = ''
-  // Clear chart-only fields for KPI / gauge
+  // Clear chart-only fields for KPI / gauge (keep KPI trend field when used).
   if (isScalarWidget.value) {
+    const trend = widgetForm.widgetType === 'kpi'
+      ? (widgetForm.dataConfig.kpiTrendField || null)
+      : null
     widgetForm.dataConfig.dimensions = []
     widgetForm.dataConfig.seriesField = ''
     widgetForm.dataConfig.joins = []
@@ -1201,11 +1312,21 @@ async function saveWidget() {
     widgetForm.dataConfig.metrics = widgetForm.dataConfig.metrics.slice(0, 1)
     widgetForm.dataConfig.orderBy = { mode: 'none', dir: 'desc', metricAs: '', left: '', right: '', agg: 'max' }
     widgetForm.dataConfig.limit = null
+    widgetForm.dataConfig.kpiTrendField = trend
+    if (
+      widgetForm.widgetType === 'kpi'
+      && (widgetForm.displayConfig.showDelta || widgetForm.displayConfig.showSparkline)
+      && !trend
+    ) {
+      widgetError.value = 'Select a trend field for KPI delta / sparkline'
+      return
+    }
   }
   const dataConfig = normalizeDataConfig({
     ...widgetForm.dataConfig,
     dimensions: (widgetForm.dataConfig.dimensions || []).filter(Boolean),
     seriesField: widgetForm.dataConfig.seriesField || null,
+    kpiTrendField: widgetForm.dataConfig.kpiTrendField || null,
   })
   if (!dataConfig.sources.length || !dataConfig.sources[0].table) {
     widgetError.value = 'Select an ingest source table'
@@ -1230,6 +1351,11 @@ async function saveWidget() {
       displayConfig: normalizeDisplayConfig({
         ...widgetForm.displayConfig,
         showTools: supportsChartToolbar.value && widgetToolsEnabled.value === true,
+        showDelta: widgetForm.widgetType === 'kpi' && widgetForm.displayConfig.showDelta === true,
+        showSparkline: widgetForm.widgetType === 'kpi' && widgetForm.displayConfig.showSparkline === true,
+        kpiPrefix: widgetForm.displayConfig.kpiPrefix || '',
+        kpiSuffix: widgetForm.displayConfig.kpiSuffix || '',
+        kpiFormat: widgetForm.displayConfig.kpiFormat || 'number',
       }),
       // Explicit top-level flag (same pattern as dashboard toolsMenuEnabled).
       showTools: supportsChartToolbar.value && widgetToolsEnabled.value === true,

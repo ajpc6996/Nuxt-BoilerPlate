@@ -91,6 +91,8 @@ export function resolveLayoutCollisions(items, activeId = null) {
  */
 export function normalizeDisplayConfig(raw) {
   const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const formatRaw = String(cfg.kpiFormat || cfg.format || 'number').toLowerCase()
+  const kpiFormat = formatRaw === 'compact' ? 'compact' : 'number'
   return {
     showLegend: cfg.showLegend !== false,
     showSeriesIndicators: cfg.showSeriesIndicators !== false,
@@ -101,6 +103,12 @@ export function normalizeDisplayConfig(raw) {
       || cfg.showTools === 1
       || cfg.showTools === '1',
     useArea: Boolean(cfg.useArea),
+    /** KPI extras (aligned with WidgetInfoCard / demo cards). */
+    showDelta: Boolean(cfg.showDelta),
+    showSparkline: Boolean(cfg.showSparkline),
+    kpiPrefix: String(cfg.kpiPrefix ?? cfg.prefix ?? '').slice(0, 16),
+    kpiSuffix: String(cfg.kpiSuffix ?? cfg.suffix ?? '').slice(0, 16),
+    kpiFormat,
   }
 }
 

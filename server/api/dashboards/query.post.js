@@ -58,20 +58,38 @@ export default defineEventHandler(async (event) => {
   }
 
   const filters = Array.isArray(body?.filters) ? body.filters : []
-  const limit = Number(body?.limit) || dataConfig.limit || 500
-  const orderBy = dataConfig.orderBy || { mode: 'none' }
+  const displayType = String(body?.displayType || widgetType)
+
+  // KPI sparkline/delta: query by trend field as dimension so we get period series.
+  let runConfig = dataConfig
+  let runLimit = Number(body?.limit) || dataConfig.limit || 500
+  const wantsKpiTrend = displayType === 'kpi'
+    && (displayConfig.showSparkline || displayConfig.showDelta)
+    && dataConfig.kpiTrendField
+  if (wantsKpiTrend) {
+    runConfig = {
+      ...dataConfig,
+      dimensions: [dataConfig.kpiTrendField],
+      seriesField: null,
+      // Keep enough points for a readable sparkline.
+      limit: Math.min(Math.max(Number(dataConfig.limit) || 24, 2), 90),
+    }
+    runLimit = runConfig.limit
+  }
+
+  const orderBy = runConfig.orderBy || { mode: 'none' }
 
   let data
   let error
   ;({ data, error } = await admin.rpc('dashboard_run_query', {
     p_organization_id: organizationId,
-    p_sources: dataConfig.sources,
-    p_joins: dataConfig.joins,
-    p_dimensions: dataConfig.dimensions,
-    p_metrics: dataConfig.metrics,
+    p_sources: runConfig.sources,
+    p_joins: runConfig.joins,
+    p_dimensions: runConfig.dimensions,
+    p_metrics: runConfig.metrics,
     p_filters: filters,
-    p_series_field: dataConfig.seriesField,
-    p_limit: limit,
+    p_series_field: runConfig.seriesField,
+    p_limit: runLimit,
     p_order_by: orderBy,
   }))
 
@@ -79,16 +97,16 @@ export default defineEventHandler(async (event) => {
   if (error && /could not find the function/i.test(error.message || '')) {
     ;({ data, error } = await admin.rpc('dashboard_run_query', {
       p_organization_id: organizationId,
-      p_sources: dataConfig.sources,
-      p_joins: dataConfig.joins,
-      p_dimensions: dataConfig.dimensions,
-      p_metrics: dataConfig.metrics,
+      p_sources: runConfig.sources,
+      p_joins: runConfig.joins,
+      p_dimensions: runConfig.dimensions,
+      p_metrics: runConfig.metrics,
       p_filters: filters,
-      p_series_field: dataConfig.seriesField,
+      p_series_field: runConfig.seriesField,
       p_limit: 5000,
     }))
     if (!error && Array.isArray(data)) {
-      data = applyOrderAndLimitLocally(data, dataConfig, limit)
+      data = applyOrderAndLimitLocally(data, runConfig, runLimit)
     }
   }
 
@@ -98,13 +116,12 @@ export default defineEventHandler(async (event) => {
 
   const rows = Array.isArray(data) ? data : []
   const shape = {
-    dimensionCount: dataConfig.dimensions.length,
-    metricCount: dataConfig.metrics.length,
-    hasSeries: Boolean(dataConfig.seriesField),
+    dimensionCount: runConfig.dimensions.length,
+    metricCount: runConfig.metrics.length,
+    hasSeries: Boolean(runConfig.seriesField),
   }
 
-  const displayType = String(body?.displayType || widgetType)
-  const dataset = mapRowsToWidgetDataset(displayType, rows, dataConfig, displayConfig)
+  const dataset = mapRowsToWidgetDataset(displayType, rows, runConfig, displayConfig)
 
   return {
     rows,

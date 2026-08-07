@@ -1,56 +1,59 @@
 <template>
   <button
     type="button"
-    class="group w-full text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+    class="group w-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
     :class="[
       bare
-        ? 'rounded-md border border-transparent px-3 py-2 hover:border-[var(--accent)]'
+        ? 'rounded-md border border-transparent px-2 py-2 hover:border-[var(--accent)]'
         : 'panel px-5 py-4 hover:border-[var(--accent)]',
-      fill ? 'flex h-full min-h-0 flex-col' : '',
-      centered ? 'items-center justify-center text-center' : '',
+      fill ? 'flex h-full min-h-0 w-full flex-col' : '',
+      centered ? 'items-center justify-center text-center' : 'text-left',
       active ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : '',
     ]"
     @click="emit('select', { id, label, value, prefix, suffix })"
   >
-    <p
-      v-if="label"
-      class="text-xs font-medium uppercase tracking-wide text-[var(--mute)]"
-    >
-      {{ label }}
-    </p>
-    <p
-      class="font-display font-semibold tracking-tight text-[var(--ink)]"
-      :class="[
-        label ? 'mt-2 text-3xl' : 'text-4xl sm:text-5xl',
-        centered ? '' : '',
-      ]"
-    >
-      <span
-        v-if="prefix"
-        class="text-lg text-[var(--mute)]"
-      >{{ prefix }}</span>{{ displayValue }}
-      <span
-        v-if="suffix"
-        class="ml-1 text-base font-medium text-[var(--mute)]"
-      >{{ suffix }}</span>
-    </p>
-    <p
-      v-if="delta != null"
-      class="mt-1 text-sm"
-      :class="delta >= 0 ? 'text-emerald-400' : 'text-[var(--danger)]'"
-    >
-      {{ delta >= 0 ? '+' : '' }}{{ delta }}% vs prior
-    </p>
     <div
-      v-if="sparkline?.length"
-      class="mt-3 h-12 w-full max-w-xs"
+      class="flex w-full max-w-full flex-col"
+      :class="centered ? 'items-center' : 'items-start'"
     >
-      <ClientOnly>
-        <VueUiSparkline
-          :dataset="sparkline"
-          :config="sparkConfig"
-        />
-      </ClientOnly>
+      <p
+        v-if="label"
+        class="text-xs font-medium uppercase tracking-wide text-[var(--mute)]"
+      >
+        {{ label }}
+      </p>
+      <p
+        class="font-display font-semibold tracking-tight text-[var(--ink)]"
+        :class="label ? 'mt-2 text-3xl' : 'text-4xl sm:text-5xl'"
+      >
+        <span
+          v-if="prefix"
+          class="text-lg text-[var(--mute)]"
+        >{{ prefix }}</span>{{ displayValue }}
+        <span
+          v-if="suffix"
+          class="ml-1 text-base font-medium text-[var(--mute)]"
+        >{{ suffix }}</span>
+      </p>
+      <p
+        v-if="delta != null"
+        class="mt-1 text-sm"
+        :class="delta >= 0 ? 'text-emerald-400' : 'text-[var(--danger)]'"
+      >
+        {{ delta >= 0 ? '+' : '' }}{{ delta }}% vs prior
+      </p>
+      <div
+        v-if="sparkline?.length"
+        class="mt-3 h-12 w-full"
+        :class="centered ? 'max-w-sm' : 'max-w-xs'"
+      >
+        <ClientOnly>
+          <VueUiSparkline
+            :dataset="sparkline"
+            :config="sparkConfig"
+          />
+        </ClientOnly>
+      </div>
     </div>
   </button>
 </template>
@@ -98,7 +101,7 @@ const props = defineProps({
     type: String,
     default: 'number',
   },
-  /** Center value in the available area (dashboard KPI). */
+  /** Center content in the available area (dashboard KPI). */
   centered: {
     type: Boolean,
     default: false,
