@@ -1,4 +1,5 @@
 import { normalizeDataConfig } from '~~/shared/dashboard.js'
+import { normalizeDashboardLayout, normalizeDisplayConfig } from '~~/shared/dashboardLayout.js'
 
 /**
  * @param {import('@supabase/supabase-js').SupabaseClient} admin
@@ -109,9 +110,24 @@ export function parseDashboardBody(body) {
   const visibility = ['private', 'role', 'public'].includes(body?.visibility)
     ? body.visibility
     : 'private'
-  const layout = body?.layout && typeof body.layout === 'object'
-    ? body.layout
-    : { version: 1, cols: 12 }
+  const rawLayout = body?.layout && typeof body.layout === 'object' ? body.layout : {}
+  // Prefer explicit toolsMenuEnabled / showToolsMenu body fields if present.
+  const layout = normalizeDashboardLayout({
+    ...rawLayout,
+    showToolsMenu: body?.toolsMenuEnabled === true
+      || body?.showToolsMenu === true
+      || rawLayout.showToolsMenu === true
+      || rawLayout?.tools?.enabled === true,
+    tools: {
+      ...(rawLayout.tools && typeof rawLayout.tools === 'object' ? rawLayout.tools : {}),
+      enabled: body?.toolsMenuEnabled === true
+        || body?.showToolsMenu === true
+        || rawLayout.showToolsMenu === true
+        || rawLayout?.tools?.enabled === true
+        || rawLayout?.tools?.enabled === 'true'
+        || rawLayout?.tools?.enabled === 1,
+    },
+  })
   const roleIds = Array.isArray(body?.roleIds)
     ? body.roleIds.map((id) => String(id)).filter(Boolean)
     : []
@@ -131,9 +147,18 @@ export function parseWidgetBody(body) {
   const grid_h = Math.max(1, Number(body?.grid_h ?? body?.gridH ?? 4) || 4)
   const sort_order = Number(body?.sort_order ?? body?.sortOrder ?? 0) || 0
   const data_config = normalizeDataConfig(body?.data_config ?? body?.dataConfig)
-  const display_config = body?.display_config && typeof body.display_config === 'object'
+  const rawDisplay = body?.display_config && typeof body.display_config === 'object'
     ? body.display_config
     : (body?.displayConfig && typeof body.displayConfig === 'object' ? body.displayConfig : {})
+  // Prefer explicit top-level showTools when present (mirrors dashboard toolsMenuEnabled).
+  const display_config = normalizeDisplayConfig({
+    ...rawDisplay,
+    showTools: body?.showTools === true
+      || body?.showTools === 'true'
+      || body?.showTools === 1
+      || body?.showTools === '1'
+      || rawDisplay.showTools,
+  })
   return {
     widget_type: widgetType,
     title,

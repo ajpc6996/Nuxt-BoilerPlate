@@ -16,6 +16,25 @@ export const DASHBOARD_WIDGET_TYPES = [
 
 export const DASHBOARD_AGGS = ['sum', 'count', 'min', 'max']
 
+export const DASHBOARD_ORDER_MODES = ['none', 'metric', 'diff']
+
+/**
+ * Default grid size when dropping a widget type on the canvas.
+ * @param {string} type
+ */
+export function defaultWidgetGrid(type) {
+  const map = {
+    kpi: { grid_w: 3, grid_h: 3 },
+    gauge: { grid_w: 4, grid_h: 4 },
+    pie: { grid_w: 4, grid_h: 4 },
+    donut: { grid_w: 4, grid_h: 4 },
+    bar: { grid_w: 6, grid_h: 4 },
+    line: { grid_w: 6, grid_h: 4 },
+    table: { grid_w: 6, grid_h: 4 },
+  }
+  return map[type] || { grid_w: 6, grid_h: 4 }
+}
+
 /**
  * @param {string} type
  */
@@ -45,14 +64,125 @@ export function suggestedDisplayTypes(shape) {
   if (metrics >= 1 && dims === 0 && !series) {
     out.push('kpi', 'gauge')
   }
-  if (metrics >= 1 && dims >= 1 && !series) {
+  if (metrics === 1 && dims >= 1 && !series) {
     out.push('bar', 'pie', 'donut', 'line')
   }
-  if (metrics >= 1 && (dims >= 1 || series)) {
+  // Multi-metric or series split → charts that support multiple series
+  if (metrics > 1 || series) {
+    out.push('line', 'bar')
+  }
+  else if (metrics >= 1 && dims >= 1) {
     out.push('line', 'bar')
   }
   out.push('table')
   return [...new Set(out)].filter((t) => DASHBOARD_WIDGET_TYPES.includes(t))
+}
+
+/**
+ * @param {ReturnType<typeof normalizeDataConfig>} dataConfig
+ */
+export function displayTypesForConfig(dataConfig) {
+  return suggestedDisplayTypes({
+    dimensionCount: (dataConfig?.dimensions || []).filter(Boolean).length,
+    metricCount: (dataConfig?.metrics || []).length,
+    hasSeries: Boolean(dataConfig?.seriesField) || (dataConfig?.metrics || []).length > 1,
+  })
+}
+
+/**
+ * Multi-series XY payload for line or bar.
+ * @param {Record<string, unknown>[]} list
+ * @param {ReturnType<typeof normalizeDataConfig>} dataConfig
+ * @param {Record<string, unknown>} [displayConfig]
+ * @param {'line'|'bar'} seriesType
+ */
+export function mapRowsToXySeries(list, dataConfig, displayConfig = {}, seriesType = 'line') {
+  const dim0 = dataConfig.dimensions[0]
+    ? String(dataConfig.dimensions[0]).replace('.', '_')
+    : null
+  const metricAs = dataConfig.metrics[0]?.as || 'value'
+  const useArea = Boolean(displayConfig?.useArea) && seriesType === 'line'
+
+  if (dataConfig.metrics.length > 1 && !dataConfig.seriesField) {
+    const categories = list.map((r) => String(dim0 ? r[dim0] : ''))
+    return {
+      categories,
+      dataset: dataConfig.metrics.map((m) => ({
+        name: m.as,
+        type: seriesType,
+        useArea,
+        series: list.map((r) => Number(r[m.as]) || 0),
+      })),
+    }
+  }
+
+  if (dataConfig.seriesField) {
+    const categories = [...new Set(list.map((r) => String(dim0 ? r[dim0] : '')))]
+    const seriesNames = [...new Set(list.map((r) => String(r.series_key || 'Series')))]
+    return {
+      categories,
+      dataset: seriesNames.map((name) => ({
+        name,
+        type: seriesType,
+        useArea,
+        series: categories.map((cat) => {
+          const hit = list.find(
+            (r) => String(dim0 ? r[dim0] : '') === cat && String(r.series_key || 'Series') === name,
+          )
+          return Number(hit?.[metricAs]) || 0
+        }),
+      })),
+    }
+  }
+
+  const categories = list.map((r) => String(dim0 ? r[dim0] : ''))
+  return {
+    categories,
+    dataset: [{
+      name: metricAs,
+      type: seriesType,
+      useArea,
+      series: list.map((r) => Number(r[metricAs]) || 0),
+    }],
+  }
+}
+
+/**
+ * @param {unknown} raw
+ */
+export function normalizeOrderBy(raw) {
+  const cfg = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const mode = DASHBOARD_ORDER_MODES.includes(cfg.mode) ? cfg.mode : 'none'
+  const dir = cfg.dir === 'asc' ? 'asc' : 'desc'
+  if (mode === 'metric') {
+    return {
+      mode,
+      dir,
+      metricAs: String(cfg.metricAs || '').trim() || null,
+      left: null,
+      right: null,
+      agg: 'max',
+    }
+  }
+  if (mode === 'diff') {
+    const agg = ['sum', 'min', 'max'].includes(cfg.agg) ? cfg.agg : 'max'
+    return {
+      mode,
+      dir,
+      metricAs: null,
+      left: String(cfg.left || '').trim() || null,
+      right: String(cfg.right || '').trim() || null,
+      agg,
+    }
+  }
+  return {
+    mode: 'none',
+    dir,
+    metricAs: null,
+    left: null,
+    right: null,
+    agg: 'max',
+  }
 }
 
 /**
@@ -84,12 +214,18 @@ export function normalizeDataConfig(raw) {
       }))
     : []
   const seriesField = cfg.seriesField ? String(cfg.seriesField).trim() : ''
+  const limitRaw = Number(cfg.limit)
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0
+    ? Math.min(Math.floor(limitRaw), 5000)
+    : null
   return {
     sources,
     joins,
     dimensions,
     metrics,
     seriesField: seriesField || null,
+    limit,
+    orderBy: normalizeOrderBy(cfg.orderBy),
   }
 }
 
@@ -103,6 +239,8 @@ export function createEmptyDataConfig() {
     dimensions: [],
     metrics: [{ field: '*', agg: 'count', as: 'value' }],
     seriesField: null,
+    limit: null,
+    orderBy: normalizeOrderBy({ mode: 'none', dir: 'desc' }),
   }
 }
 
@@ -136,6 +274,7 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
   }
 
   if (widgetType === 'pie' || widgetType === 'donut') {
+    // Pie/donut use the first metric only (multi-series not applicable).
     return list.map((row) => ({
       name: String(dim0 ? row[dim0] : row.series_key || 'Item'),
       values: [Number(row[metricAs]) || 0],
@@ -143,6 +282,9 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
   }
 
   if (widgetType === 'bar') {
+    if (dataConfig.metrics.length > 1 || dataConfig.seriesField) {
+      return mapRowsToXySeries(list, dataConfig, displayConfig, 'bar')
+    }
     return list.map((row) => ({
       name: String(dim0 ? row[dim0] : row.series_key || 'Item'),
       value: Number(row[metricAs]) || 0,
@@ -150,32 +292,7 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
   }
 
   if (widgetType === 'line') {
-    if (dataConfig.seriesField) {
-      const categories = [...new Set(list.map((r) => String(dim0 ? r[dim0] : '')))]
-      const seriesNames = [...new Set(list.map((r) => String(r.series_key || 'Series')))]
-      const dataset = seriesNames.map((name) => ({
-        name,
-        type: 'line',
-        useArea: Boolean(displayConfig?.useArea),
-        series: categories.map((cat) => {
-          const hit = list.find(
-            (r) => String(dim0 ? r[dim0] : '') === cat && String(r.series_key || 'Series') === name,
-          )
-          return Number(hit?.[metricAs]) || 0
-        }),
-      }))
-      return { categories, dataset }
-    }
-    const categories = list.map((r) => String(dim0 ? r[dim0] : ''))
-    return {
-      categories,
-      dataset: [{
-        name: metricAs,
-        type: 'line',
-        useArea: Boolean(displayConfig?.useArea),
-        series: list.map((r) => Number(r[metricAs]) || 0),
-      }],
-    }
+    return mapRowsToXySeries(list, dataConfig, displayConfig, 'line')
   }
 
   // table / fallback

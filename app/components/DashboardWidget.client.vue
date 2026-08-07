@@ -1,77 +1,180 @@
 <template>
   <div
-    class="dashboard-widget min-h-0"
-    :style="gridStyle"
+    class="dashboard-widget flex h-full min-h-0 flex-col"
+    :style="outerStyle"
   >
     <div
       v-if="loading"
-      class="panel flex h-full min-h-[12rem] items-center justify-center text-sm text-[var(--mute)]"
+      class="panel flex h-full min-h-[12rem] flex-1 items-center justify-center text-sm text-[var(--mute)]"
     >
       Loading…
     </div>
     <div
       v-else-if="error"
-      class="panel flex h-full min-h-[12rem] items-center justify-center px-4 text-sm text-[var(--danger)]"
+      class="panel flex h-full min-h-[12rem] flex-1 items-center justify-center px-4 text-sm text-[var(--danger)]"
     >
       {{ error }}
     </div>
-    <template v-else>
-      <WidgetInfoCard
-        v-if="effectiveType === 'kpi'"
-        :id="widget.id"
-        :label="widget.title"
-        :value="kpiValue"
-        :active="isActive"
-        @select="onKpiSelect"
-      />
-      <WidgetGauge
-        v-else-if="effectiveType === 'gauge'"
-        :title="widget.title"
-        :subtitle="widget.subtitle || ''"
-        :dataset="dataset"
-      />
-      <WidgetBar
-        v-else-if="effectiveType === 'bar'"
-        :title="widget.title"
-        :subtitle="widget.subtitle || ''"
-        :dataset="dataset"
-        @select="onBarSelect"
-      />
-      <WidgetLine
-        v-else-if="effectiveType === 'line'"
-        :title="widget.title"
-        :subtitle="widget.subtitle || ''"
-        :dataset="lineDataset"
-        :categories="lineCategories"
-        @select="onLineSelect"
-      />
-      <WidgetPie
-        v-else-if="effectiveType === 'pie'"
-        :title="widget.title"
-        :subtitle="widget.subtitle || ''"
-        :dataset="dataset"
-        @select="onPieSelect"
-      />
-      <WidgetDonut
-        v-else-if="effectiveType === 'donut'"
-        :title="widget.title"
-        :subtitle="widget.subtitle || ''"
-        :dataset="dataset"
-        @select="onPieSelect"
-      />
-      <WidgetPanel
-        v-else
-        :title="widget.title"
-        :subtitle="widget.subtitle || 'Table'"
+    <section
+      v-else
+      class="panel relative flex h-full min-h-0 flex-1 flex-col overflow-visible"
+    >
+      <header
+        class="dashboard-widget__drag relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-2 overflow-visible border-b border-[var(--border-soft)] px-3 py-2"
+        :class="locked ? '' : 'cursor-grab active:cursor-grabbing'"
       >
-        <div class="max-h-80 overflow-auto">
-          <table class="min-w-full text-left text-xs">
+        <div class="min-w-0 flex items-center gap-2">
+          <span
+            v-if="!locked"
+            class="select-none text-[var(--mute-soft)]"
+            title="Drag to move"
+            aria-hidden="true"
+          >⠿</span>
+          <div class="min-w-0">
+            <InfoTip
+              :text="widgetDescription"
+              aria-label="Widget description"
+            >
+              <p class="truncate text-sm font-medium text-[var(--ink)]">
+                {{ widget.title }}
+              </p>
+            </InfoTip>
+            <p
+              v-if="showTypeLabel"
+              class="truncate text-[10px] uppercase tracking-wide text-[var(--mute)]"
+            >
+              {{ widgetMeta(effectiveType).label }}
+            </p>
+          </div>
+        </div>
+        <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+          <label
+            v-if="showTypeSelect"
+            class="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--mute)]"
+          >
+            <span class="sr-only">Chart type</span>
+            <select
+              v-model="selectedType"
+              class="rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1 text-xs normal-case text-[var(--ink)]"
+              @change="onTypeChange"
+            >
+              <option
+                v-for="t in availableTypes"
+                :key="t"
+                :value="t"
+              >
+                {{ widgetMeta(t).label }}
+              </option>
+            </select>
+          </label>
+          <template v-if="supportsLegendControls && canConfigure">
+            <button
+              type="button"
+              class="rounded border border-[var(--border)] px-1.5 py-1 text-[10px] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+              :title="displayConfig.showLegend ? 'Hide legend' : 'Show legend'"
+              @click.stop="toggleDisplayFlag('showLegend')"
+            >
+              {{ displayConfig.showLegend ? 'Legend' : 'No legend' }}
+            </button>
+            <button
+              type="button"
+              class="rounded border border-[var(--border)] px-1.5 py-1 text-[10px] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+              :title="displayConfig.showSeriesIndicators ? 'Hide series markers' : 'Show series markers'"
+              @click.stop="toggleDisplayFlag('showSeriesIndicators')"
+            >
+              {{ displayConfig.showSeriesIndicators ? 'Markers' : 'No markers' }}
+            </button>
+          </template>
+        </div>
+      </header>
+
+      <div
+        class="flex min-h-0 flex-1 flex-col p-2 sm:p-3"
+        :class="chartToolsEnabled ? 'overflow-visible' : 'overflow-hidden'"
+      >
+        <WidgetInfoCard
+          v-if="effectiveType === 'kpi'"
+          class="h-full min-h-0"
+          :id="widget.id"
+          label=""
+          :value="kpiValue"
+          :active="isActive"
+          centered
+          fill
+          bare
+          @select="onKpiSelect"
+        />
+        <WidgetGauge
+          v-else-if="effectiveType === 'gauge'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="dataset"
+          :show-tools="chartToolsEnabled"
+        />
+        <WidgetBar
+          v-else-if="effectiveType === 'bar'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="dataset"
+          :show-legend="displayConfig.showLegend"
+          :show-series-indicators="displayConfig.showSeriesIndicators"
+          :show-tools="chartToolsEnabled"
+          fill
+          @select="onBarSelect"
+        />
+        <WidgetLine
+          v-else-if="effectiveType === 'line'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="lineDataset"
+          :categories="lineCategories"
+          :show-legend="displayConfig.showLegend"
+          :show-series-indicators="displayConfig.showSeriesIndicators"
+          :show-tools="chartToolsEnabled"
+          fill
+          @select="onLineSelect"
+        />
+        <WidgetPie
+          v-else-if="effectiveType === 'pie'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="dataset"
+          :show-legend="displayConfig.showLegend"
+          :show-series-indicators="displayConfig.showSeriesIndicators"
+          :show-tools="chartToolsEnabled"
+          @select="onPieSelect"
+        />
+        <WidgetDonut
+          v-else-if="effectiveType === 'donut'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="dataset"
+          :show-legend="displayConfig.showLegend"
+          :show-series-indicators="displayConfig.showSeriesIndicators"
+          :show-tools="chartToolsEnabled"
+          @select="onPieSelect"
+        />
+        <div
+          v-else
+          class="h-full max-h-full overflow-auto"
+        >
+          <table class="min-w-full text-left text-sm">
             <thead class="border-b border-[var(--border)] text-[var(--mute)]">
               <tr>
                 <th
                   v-for="col in tableColumns"
                   :key="col"
-                  class="px-2 py-1 font-medium"
+                  class="px-2 py-1.5 font-medium"
                 >
                   {{ col }}
                 </th>
@@ -81,22 +184,22 @@
               <tr
                 v-for="(row, idx) in tableRows"
                 :key="idx"
-                class="border-b border-[var(--border-soft)] cursor-pointer hover:bg-[var(--accent-soft)]"
+                class="cursor-pointer border-b border-[var(--border-soft)] hover:bg-[var(--accent-soft)]"
                 @click="onTableRow(row)"
               >
                 <td
                   v-for="col in tableColumns"
                   :key="col"
-                  class="px-2 py-1 text-[var(--ink)]"
+                  class="px-2 py-1.5 text-[var(--ink)]"
                 >
-                  {{ row[col] }}
+                  {{ formatCell(row[col]) }}
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-      </WidgetPanel>
-    </template>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -107,18 +210,28 @@ import WidgetGauge from '~/components/WidgetGauge.client.vue'
 import WidgetPie from '~/components/WidgetPie.client.vue'
 import WidgetBar from '~/components/WidgetBar.client.vue'
 import WidgetLine from '~/components/WidgetLine.client.vue'
-import WidgetPanel from '~/components/WidgetPanel.vue'
-import { normalizeDataConfig } from '~~/shared/dashboard.js'
+import InfoTip from '~/components/InfoTip.vue'
+import {
+  displayTypesForConfig,
+  normalizeDataConfig,
+  widgetMeta,
+} from '~~/shared/dashboard.js'
+import { normalizeDisplayConfig } from '~~/shared/dashboardLayout.js'
 
 const props = defineProps({
   widget: { type: Object, required: true },
   organizationId: { type: String, required: true },
   dashboardId: { type: String, required: true },
   filters: { type: Array, default: () => [] },
-  displayTypeOverride: { type: String, default: '' },
+  locked: { type: Boolean, default: true },
+  canConfigure: { type: Boolean, default: false },
+  /** When false, CSS grid placement is handled by DashboardBoard */
+  useCssGrid: { type: Boolean, default: false },
+  /** Bumped by parent to soft-refresh query data without full page reload. */
+  refreshNonce: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['filter'])
+const emit = defineEmits(['filter', 'type-change', 'display-change', 'data-loaded'])
 
 const authedFetch = useAuthedFetch()
 const loading = ref(true)
@@ -126,15 +239,50 @@ const error = ref('')
 const dataset = ref(null)
 const rows = ref([])
 const dataConfig = ref(normalizeDataConfig(props.widget.data_config))
+const selectedType = ref(props.widget.widget_type || 'table')
+const suggestedFromApi = ref([])
+const displayConfig = ref(normalizeDisplayConfig(props.widget.display_config))
 
-const effectiveType = computed(() =>
-  props.displayTypeOverride || props.widget.widget_type || 'table',
+const widgetDescription = computed(() =>
+  String(props.widget.subtitle || props.widget.description || '').trim(),
 )
 
-const gridStyle = computed(() => ({
-  gridColumn: `${(props.widget.grid_x || 0) + 1} / span ${props.widget.grid_w || 6}`,
-  gridRow: `${(props.widget.grid_y || 0) + 1} / span ${Math.max(1, props.widget.grid_h || 4)}`,
-}))
+/** Per-widget chart toolbar from display_config.showTools. */
+const chartToolsEnabled = computed(() => displayConfig.value.showTools === true)
+
+const availableTypes = computed(() => {
+  const fromShape = displayTypesForConfig(dataConfig.value)
+  const fromApi = suggestedFromApi.value || []
+  const merged = [...new Set([...(fromApi.length ? fromApi : fromShape), selectedType.value])]
+  return merged
+})
+
+const effectiveType = computed(() => selectedType.value || props.widget.widget_type || 'table')
+
+const supportsLegendControls = computed(() =>
+  ['line', 'bar', 'pie', 'donut'].includes(effectiveType.value),
+)
+
+/** Type dropdown while configuring, or when display_config asks to show type. */
+const showTypeSelect = computed(() => {
+  if (availableTypes.value.length <= 1) return false
+  if (!props.locked && props.canConfigure) return true
+  return displayConfig.value.showWidgetType
+})
+
+/** Static type label on view when showWidgetType but only one type (no select). */
+const showTypeLabel = computed(() =>
+  displayConfig.value.showWidgetType && !showTypeSelect.value,
+)
+
+const outerStyle = computed(() => {
+  if (!props.useCssGrid) return { height: '100%' }
+  return {
+    height: '100%',
+    gridColumn: `${(props.widget.grid_x || 0) + 1} / span ${props.widget.grid_w || 6}`,
+    gridRow: `${(props.widget.grid_y || 0) + 1} / span ${Math.max(1, props.widget.grid_h || 4)}`,
+  }
+})
 
 const kpiValue = computed(() => {
   if (dataset.value && typeof dataset.value === 'object' && 'value' in dataset.value) {
@@ -166,8 +314,32 @@ const isActive = computed(() =>
 
 const dimField = computed(() => dataConfig.value.dimensions[0] || null)
 
-async function load() {
-  loading.value = true
+watch(
+  () => props.widget.widget_type,
+  (t) => {
+    if (t && t !== selectedType.value) selectedType.value = t
+  },
+)
+
+watch(
+  () => props.widget.display_config,
+  (cfg) => {
+    displayConfig.value = normalizeDisplayConfig(cfg)
+  },
+  { deep: true },
+)
+
+/** Stable key so filter identity changes do not spuriously refetch. */
+const filterKey = computed(() => JSON.stringify(props.filters || []))
+
+/**
+ * @param {{ quiet?: boolean }} [opts]
+ */
+async function load(opts = {}) {
+  const quiet = Boolean(opts.quiet)
+  if (!quiet) {
+    loading.value = true
+  }
   error.value = ''
   try {
     const res = await authedFetch('/api/dashboards/query', {
@@ -183,6 +355,8 @@ async function load() {
     dataset.value = res.dataset
     rows.value = res.rows || []
     dataConfig.value = normalizeDataConfig(res.dataConfig || props.widget.data_config)
+    suggestedFromApi.value = res.suggestedTypes || []
+    emit('data-loaded', { widgetId: props.widget.id, at: Date.now() })
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Query failed'
@@ -190,17 +364,86 @@ async function load() {
     rows.value = []
   }
   finally {
-    loading.value = false
+    if (!quiet) {
+      loading.value = false
+    }
   }
 }
 
+// Multi-source watch — avoids refetch when only display_config changes.
 watch(
-  () => [props.widget.id, props.filters, props.displayTypeOverride],
+  [
+    () => props.widget.id,
+    () => props.dashboardId,
+    () => props.organizationId,
+    () => effectiveType.value,
+    filterKey,
+  ],
   () => {
-    load()
+    load({ quiet: false })
   },
-  { deep: true, immediate: true },
+  { immediate: true },
 )
+
+watch(
+  () => props.refreshNonce,
+  (nonce, prev) => {
+    if (prev == null || nonce === prev) return
+    load({ quiet: true })
+  },
+)
+
+async function persistWidget(extra = {}) {
+  if (!props.canConfigure) return
+  try {
+    await authedFetch(`/api/dashboards/${props.dashboardId}/widgets/${props.widget.id}`, {
+      method: 'PUT',
+      body: {
+        organizationId: props.organizationId,
+        title: props.widget.title,
+        widgetType: selectedType.value,
+        gridX: props.widget.grid_x,
+        gridY: props.widget.grid_y,
+        gridW: props.widget.grid_w,
+        gridH: props.widget.grid_h,
+        dataConfig: props.widget.data_config,
+        displayConfig: displayConfig.value,
+        subtitle: props.widget.subtitle,
+        ...extra,
+      },
+    })
+  }
+  catch {
+    // Local toggle still works if persist fails
+  }
+}
+
+async function onTypeChange() {
+  emit('type-change', { widgetId: props.widget.id, widgetType: selectedType.value })
+  await persistWidget()
+}
+
+/**
+ * @param {'showLegend'|'showSeriesIndicators'} key
+ */
+async function toggleDisplayFlag(key) {
+  displayConfig.value = {
+    ...displayConfig.value,
+    [key]: !displayConfig.value[key],
+  }
+  emit('display-change', { widgetId: props.widget.id, displayConfig: displayConfig.value })
+  await persistWidget()
+}
+
+/**
+ * @param {unknown} value
+ */
+function formatCell(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value : Number(value).toLocaleString(undefined, { maximumFractionDigits: 4 })
+  }
+  return value
+}
 
 function emitDimFilter(value, label) {
   if (!dimField.value) return
@@ -212,13 +455,11 @@ function emitDimFilter(value, label) {
   })
 }
 
-function onKpiSelect() {
-  // KPI has no dimension — no-op for cross-filter
-}
+function onKpiSelect() {}
 
 function onBarSelect(payload) {
-  const name = payload?.name ?? payload
-  emitDimFilter(name, String(name))
+  const name = payload?.name ?? payload?.datapoint?.name ?? payload
+  if (name != null && typeof name !== 'object') emitDimFilter(name, String(name))
 }
 
 function onPieSelect(payload) {

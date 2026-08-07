@@ -1,15 +1,34 @@
 <template>
   <button
     type="button"
-    class="panel group w-full px-5 py-4 text-left transition-colors hover:border-[var(--accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-    :class="{ 'border-[var(--accent)] bg-[var(--accent-soft)]': active }"
+    class="group w-full text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+    :class="[
+      bare
+        ? 'rounded-md border border-transparent px-3 py-2 hover:border-[var(--accent)]'
+        : 'panel px-5 py-4 hover:border-[var(--accent)]',
+      fill ? 'flex h-full min-h-0 flex-col' : '',
+      centered ? 'items-center justify-center text-center' : '',
+      active ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : '',
+    ]"
     @click="emit('select', { id, label, value, prefix, suffix })"
   >
-    <p class="text-xs font-medium uppercase tracking-wide text-[var(--mute)]">
+    <p
+      v-if="label"
+      class="text-xs font-medium uppercase tracking-wide text-[var(--mute)]"
+    >
       {{ label }}
     </p>
-    <p class="mt-2 font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-      <span v-if="prefix" class="text-lg text-[var(--mute)]">{{ prefix }}</span>{{ displayValue }}
+    <p
+      class="font-display font-semibold tracking-tight text-[var(--ink)]"
+      :class="[
+        label ? 'mt-2 text-3xl' : 'text-4xl sm:text-5xl',
+        centered ? '' : '',
+      ]"
+    >
+      <span
+        v-if="prefix"
+        class="text-lg text-[var(--mute)]"
+      >{{ prefix }}</span>{{ displayValue }}
       <span
         v-if="suffix"
         class="ml-1 text-base font-medium text-[var(--mute)]"
@@ -24,7 +43,7 @@
     </p>
     <div
       v-if="sparkline?.length"
-      class="mt-3 h-12"
+      class="mt-3 h-12 w-full max-w-xs"
     >
       <ClientOnly>
         <VueUiSparkline
@@ -48,7 +67,7 @@ const props = defineProps({
   },
   label: {
     type: String,
-    required: true,
+    default: '',
   },
   value: {
     type: [Number, String],
@@ -78,6 +97,21 @@ const props = defineProps({
   format: {
     type: String,
     default: 'number',
+  },
+  /** Center value in the available area (dashboard KPI). */
+  centered: {
+    type: Boolean,
+    default: false,
+  },
+  /** Stretch to parent height. */
+  fill: {
+    type: Boolean,
+    default: false,
+  },
+  /** Skip outer panel chrome when nested in DashboardWidget. */
+  bare: {
+    type: Boolean,
+    default: false,
   },
 })
 

@@ -1,8 +1,11 @@
 <template>
-  <section class="panel flex flex-col overflow-hidden">
+  <section
+    class="panel flex min-h-0 flex-col overflow-hidden"
+    :class="fill ? 'h-full' : ''"
+  >
     <header
       v-if="title || $slots.actions"
-      class="flex items-start justify-between gap-3 border-b border-[var(--border-soft)] px-5 py-4"
+      class="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border-soft)] px-5 py-4"
     >
       <div class="min-w-0">
         <h2
@@ -25,7 +28,10 @@
         <slot name="actions" />
       </div>
     </header>
-    <div class="flex-1 px-4 py-4 sm:px-5">
+    <div
+      class="min-h-0 flex-1"
+      :class="compact ? 'p-2 sm:p-3' : 'px-4 py-4 sm:px-5'"
+    >
       <slot />
     </div>
   </section>
@@ -40,6 +46,16 @@ defineProps({
   subtitle: {
     type: String,
     default: '',
+  },
+  /** Stretch to parent height (dashboard widgets). */
+  fill: {
+    type: Boolean,
+    default: false,
+  },
+  /** Tighter padding when chrome is outside the panel. */
+  compact: {
+    type: Boolean,
+    default: false,
   },
 })
 </script>

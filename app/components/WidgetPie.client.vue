@@ -1,15 +1,27 @@
 <template>
   <WidgetPanel
+    v-if="!bare"
     :title="title"
     :subtitle="subtitle"
   >
     <div class="min-h-[260px]">
       <VueUiDonut
+        :key="`pie-${showLegend}-${showSeriesIndicators}`"
         :dataset="dataset"
         :config="mergedConfig"
       />
     </div>
   </WidgetPanel>
+  <div
+    v-else
+    class="flex h-full min-h-[200px] w-full items-center justify-center"
+  >
+    <VueUiDonut
+      :key="`pie-${showLegend}-${showSeriesIndicators}`"
+      :dataset="dataset"
+      :config="mergedConfig"
+    />
+  </div>
 </template>
 
 <script setup>
@@ -18,10 +30,9 @@ import WidgetPanel from '~/components/WidgetPanel.vue'
 import { VueUiDonut } from 'vue-data-ui'
 import {
   chartInk,
-  chartMute,
   chartPalette,
   chartSurface,
-  chartUserOptionsOff,
+  chartUserOptionsForTools,
   mergeChartConfig,
 } from '~/utils/chartTheme.js'
 
@@ -43,17 +54,35 @@ const props = defineProps({
     type: Object,
     default: () => ({}),
   },
+  bare: {
+    type: Boolean,
+    default: false,
+  },
+  showLegend: {
+    type: Boolean,
+    default: true,
+  },
+  showSeriesIndicators: {
+    type: Boolean,
+    default: true,
+  },
+  showTools: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['select'])
 
-const baseConfig = {
+const userOptions = computed(() => chartUserOptionsForTools(props.showTools))
+
+const baseConfig = computed(() => ({
   responsive: true,
   pie: true,
   useCssAnimation: true,
   customPalette: chartPalette,
   useBlurOnHover: true,
-  userOptions: chartUserOptionsOff(),
+  userOptions: userOptions.value,
   events: {
     datapointClick: ({ datapoint }) => {
       emit('select', { datapoint })
@@ -65,26 +94,32 @@ const baseConfig = {
       backgroundColor: chartSurface,
       color: chartInk,
       useGradient: true,
+      userOptions: userOptions.value,
       layout: {
         labels: {
           hollow: {
             show: false,
           },
           name: {
-            color: chartMute,
+            show: props.showSeriesIndicators,
+            color: chartInk,
+            fontSize: 13,
           },
           percentage: {
+            show: props.showSeriesIndicators,
             color: chartInk,
+            fontSize: 13,
           },
         },
       },
       legend: {
+        show: props.showLegend,
         backgroundColor: chartSurface,
-        color: chartMute,
+        color: chartInk,
       },
     },
   },
-}
+}))
 
-const mergedConfig = computed(() => mergeChartConfig(baseConfig, props.config))
+const mergedConfig = computed(() => mergeChartConfig(baseConfig.value, props.config))
 </script>

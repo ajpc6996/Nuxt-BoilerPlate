@@ -148,9 +148,24 @@ const railCollapsed = computed(() => collapsed.value)
 /** @type {ReturnType<typeof setTimeout> | null} */
 let labelClickTimer = null
 
+/**
+ * True when `to` is the best (longest) nav match for the current path.
+ * Prevents parent hubs like `/dashboards` lighting up under `/dashboards/configure`.
+ * @param {string} to
+ */
 const isActive = (to) => {
   if (to === '/') return route.path === '/'
-  return route.path === to || route.path.startsWith(`${to}/`)
+  const path = route.path
+  if (path !== to && !path.startsWith(`${to}/`)) return false
+
+  const siblings = filteredGroups.value.flatMap((group) =>
+    (group.children || []).map((item) => item.to),
+  )
+  const hasMoreSpecific = siblings.some((other) => {
+    if (!other || other === to || other.length <= to.length) return false
+    return path === other || path.startsWith(`${other}/`)
+  })
+  return !hasMoreSpecific
 }
 
 const onNavigate = () => {

@@ -1,5 +1,6 @@
 <template>
   <WidgetPanel
+    v-if="!bare"
     :title="title"
     :subtitle="subtitle"
   >
@@ -10,6 +11,15 @@
       />
     </div>
   </WidgetPanel>
+  <div
+    v-else
+    class="mx-auto flex h-full min-h-0 w-full max-w-md items-center justify-center"
+  >
+    <VueUiGauge
+      :dataset="dataset"
+      :config="mergedConfig"
+    />
+  </div>
 </template>
 
 <script setup>
@@ -22,7 +32,7 @@ import {
   chartMute,
   chartPalette,
   chartSurface,
-  chartUserOptionsOff,
+  chartUserOptionsForTools,
   mergeChartConfig,
 } from '~/utils/chartTheme.js'
 
@@ -47,12 +57,22 @@ const props = defineProps({
     type: Object,
     default: () => ({}),
   },
+  bare: {
+    type: Boolean,
+    default: false,
+  },
+  showTools: {
+    type: Boolean,
+    default: false,
+  },
 })
 
-const baseConfig = {
+const userOptions = computed(() => chartUserOptionsForTools(props.showTools))
+
+const baseConfig = computed(() => ({
   responsive: true,
   customPalette: chartPalette,
-  userOptions: chartUserOptionsOff(),
+  userOptions: userOptions.value,
   style: {
     fontFamily: 'DM Sans, system-ui, sans-serif',
     chart: {
@@ -94,7 +114,7 @@ const baseConfig = {
       },
     },
   },
-}
+}))
 
-const mergedConfig = computed(() => mergeChartConfig(baseConfig, props.config))
+const mergedConfig = computed(() => mergeChartConfig(baseConfig.value, props.config))
 </script>

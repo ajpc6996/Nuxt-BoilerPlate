@@ -73,6 +73,17 @@ const route = useRoute()
 
 useHead({ title: 'Login' })
 
+/**
+ * Safe in-app redirect after auth (honours ?redirect= from middleware).
+ */
+function postAuthPath() {
+  const redirect = route.query.redirect
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
+    return redirect
+  }
+  return '/'
+}
+
 const email = ref('')
 const password = ref('')
 const errorMessage = ref(
@@ -87,7 +98,7 @@ watch(
   isAuthenticated,
   (value) => {
     if (value && route.path === '/login') {
-      navigateTo('/')
+      navigateTo(postAuthPath())
     }
   },
   { immediate: true },

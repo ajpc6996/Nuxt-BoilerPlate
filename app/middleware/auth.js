@@ -1,8 +1,12 @@
 export default defineNuxtRouteMiddleware(async (to) => {
+  // Auth session is browser-only (supabase.client plugin). Skipping SSR avoids a
+  // login flash when opening dashboards in a new tab/window.
+  if (import.meta.server) return
+
   const authStore = useAuthStore()
 
   // Wait briefly for client plugin hydration on first paint
-  if (import.meta.client && !authStore.initialized) {
+  if (!authStore.initialized) {
     await until(() => authStore.initialized).toBe(true)
   }
 

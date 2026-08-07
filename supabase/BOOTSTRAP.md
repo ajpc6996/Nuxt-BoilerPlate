@@ -125,7 +125,9 @@ Restart `npm run dev`.
   - Seeded: `json_file`, `csv_file`, `rest_generic`  
   - **Generate with AI** proposes connection / source / credential schemas; review then publish  
 - **Connections** (`/data-sources/connections`) — shared base URL + credentials (reusable)  
+  - REST **Authentication**: `none` (public APIs) or `api_key` (optional encrypted key)  
 - **Sources** (`/data-sources/sources`) — path, paging, lookup, destination table; pick an existing connection  
+  - REST path may be empty when the connection Base URL is already the full request URL (avoids a trailing `/` after `?query=…`)  
 
 ### Ingest landing
 
@@ -160,7 +162,9 @@ Each Source has a canvas: **Retrieve → (Filter | Transform)* → Ingest**.
 
 ### Dashboards (v1)
 
-Apply `20260805200000_dashboards.sql`.
+Apply `20260806110000_dashboard_order_limit.sql` for SQL-side ORDER BY / top-N
+(`orderBy.mode` = `metric` | `diff`, plus `limit`). Until applied, the query API
+falls back to sorting in Node after fetch.
 
 - **View Dashboards** (`/dashboards`) — org members see dashboards by visibility (`public` / `role` / `private`); Org Admin & Platform Admin see all
 - **Configure Dashboards** (`/dashboards/configure`) — Org Admin / Platform (aal2): create, edit widgets, joins, aggregates

@@ -22,10 +22,48 @@ export const chartAccent = '#00c2c7'
 
 /**
  * Hide vue-data-ui chrome buttons for a cleaner dashboard look.
- * @returns {{ show: boolean }}
+ * VueUiXy reads `chart.userOptions`; some charts also accept top-level `userOptions`.
+ * @returns {Record<string, unknown>}
  */
 export function chartUserOptionsOff() {
-  return { show: false }
+  return {
+    show: false,
+    showOnChartHover: false,
+    keepStateOnChartLeave: false,
+    buttons: {
+      tooltip: false,
+      pdf: false,
+      csv: false,
+      img: false,
+      svg: false,
+      labels: false,
+      table: false,
+      stack: false,
+      sort: false,
+      zoom: false,
+      animation: false,
+      fullscreen: false,
+      annotator: false,
+      altCopy: false,
+    },
+  }
+}
+
+/**
+ * Show the chart's built-in user-options menu with library defaults.
+ * Do not override `buttons` — each chart type applies its own applicable set
+ * (PDF, PNG, CSV, SVG, table, labels, stack, fullscreen, annotator, etc.).
+ * @param {boolean} enabled
+ * @returns {Record<string, unknown>}
+ */
+export function chartUserOptionsForTools(enabled) {
+  if (!enabled) return chartUserOptionsOff()
+  return {
+    show: true,
+    showOnChartHover: true,
+    keepStateOnChartLeave: true,
+    position: 'right',
+  }
 }
 
 /**
