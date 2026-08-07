@@ -171,14 +171,38 @@
 
           <div v-if="selectedType && hasConnectionFields">
             <h3 class="mb-2 text-sm font-semibold text-[var(--ink)]">Connection settings</h3>
+            <div
+              v-if="needsAuthModeFallback"
+              class="mb-4 flex flex-col gap-1"
+            >
+              <label
+                for="connection-auth-mode"
+                class="text-xs font-medium text-[var(--mute)]"
+              >Authentication</label>
+              <p class="text-xs text-[var(--mute-soft)]">
+                Use none for public APIs (no Authorization header).
+              </p>
+              <select
+                id="connection-auth-mode"
+                v-model="form.config.authMode"
+                class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+              >
+                <option value="none">none</option>
+                <option value="api_key">api_key</option>
+              </select>
+            </div>
             <SchemaFormFields
               v-model="form.config"
               :schema="selectedType.connection_schema"
+              :omit-keys="authFieldOmitKeys"
             />
           </div>
 
-          <div v-if="selectedType && hasCredentialFields">
+          <div v-if="selectedType && showCredentialFields">
             <h3 class="mb-2 text-sm font-semibold text-[var(--ink)]">Credentials</h3>
+            <p class="mb-2 text-xs text-[var(--mute-soft)]">
+              Leave blank for public APIs. Stored encrypted when provided.
+            </p>
             <SchemaFormFields
               v-model="form.credentials"
               :schema="selectedType.credential_schema"
@@ -186,6 +210,13 @@
               :has-existing-secrets="form.hasSecrets"
             />
           </div>
+
+          <p
+            v-else-if="selectedType && usesExplicitNoAuth"
+            class="rounded-md border border-[var(--border-soft)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--mute)]"
+          >
+            Authentication: none — requests are sent without auth headers.
+          </p>
 
           <p
             v-if="selectedType && !hasConnectionFields && !hasCredentialFields"
@@ -274,6 +305,36 @@ const hasConnectionFields = computed(() =>
   Boolean(Object.keys(selectedType.value?.connection_schema?.properties || {}).length),
 )
 
+/** Effective auth mode: connection config override, else connector type. */
+const effectiveAuthMode = computed(() => {
+  const fromConfig = String(form.config?.authMode || '').trim().toLowerCase()
+  if (fromConfig === 'none' || fromConfig === 'api_key' || fromConfig === 'bearer') {
+    return fromConfig === 'bearer' ? 'api_key' : fromConfig
+  }
+  const fromType = String(selectedType.value?.auth_mode || '').trim().toLowerCase()
+  if (fromType === 'none') return 'none'
+  if (fromType === 'api_key' || fromType === 'bearer') return 'api_key'
+  return hasCredentialFields.value ? 'api_key' : 'none'
+})
+
+const usesExplicitNoAuth = computed(() => effectiveAuthMode.value === 'none')
+
+const showCredentialFields = computed(() =>
+  hasCredentialFields.value && effectiveAuthMode.value !== 'none',
+)
+
+/** Hide auth header/prefix fields when auth is off. */
+const authFieldOmitKeys = computed(() =>
+  effectiveAuthMode.value === 'none' ? ['authHeader', 'authPrefix'] : [],
+)
+
+/** Until migration adds authMode to connection_schema, show a local control. */
+const needsAuthModeFallback = computed(() => {
+  const key = selectedType.value?.key || selectedType.value?.runner_key
+  if (key !== 'rest_generic') return false
+  return !selectedType.value?.connection_schema?.properties?.authMode
+})
+
 function statusClass(status) {
   if (status === 'ready') return 'bg-emerald-500/15 text-emerald-300'
   if (status === 'error') return 'bg-red-500/15 text-[var(--danger)]'
@@ -291,6 +352,9 @@ function defaultsFromSchema(schema) {
 
 function onTypeChange() {
   form.config = defaultsFromSchema(selectedType.value?.connection_schema)
+  if (needsAuthModeFallback.value && !form.config.authMode) {
+    form.config.authMode = 'none'
+  }
   form.credentials = {}
 }
 
@@ -299,6 +363,9 @@ function openCreate() {
   form.name = ''
   form.connectorTypeId = catalog.value[0]?.id || ''
   form.config = defaultsFromSchema(selectedType.value?.connection_schema)
+  if (needsAuthModeFallback.value && !form.config.authMode) {
+    form.config.authMode = 'none'
+  }
   form.credentials = {}
   form.hasSecrets = false
   editorOpen.value = true
@@ -317,9 +384,14 @@ async function openEdit(row) {
     editingId.value = item.id
     form.name = item.name
     form.connectorTypeId = item.connector_type_id
+    form.hasSecrets = Boolean(item.hasSecrets)
     form.config = { ...(item.config || {}) }
     form.credentials = {}
-    form.hasSecrets = Boolean(item.hasSecrets)
+    const type = catalog.value.find((t) => t.id === item.connector_type_id)
+    const isRest = type?.key === 'rest_generic' || type?.runner_key === 'rest_generic'
+    if (isRest && !form.config.authMode) {
+      form.config.authMode = form.hasSecrets ? 'api_key' : 'none'
+    }
     editorOpen.value = true
   }
   catch (err) {

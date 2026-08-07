@@ -19,12 +19,14 @@ import {
 export async function runRestGeneric(ctx) {
   const config = ctx.config || {}
   const secrets = ctx.secrets || {}
-  const baseUrl = String(config.baseUrl || '').replace(/\/$/, '')
-  const pathTemplate = String(config.path || '/')
+  const baseUrl = String(config.baseUrl || '').trim().replace(/\/$/, '')
+  // Empty / lone "/" means "use baseUrl as-is" (do not append after ?query).
+  const pathTemplate = String(config.path ?? '').trim()
   const method = String(config.method || 'GET').toUpperCase()
   const maxPages = Math.min(Number(config.maxPages) || 5, ctx.mode === 'test' ? 1 : 50)
   const pagingMode = config.pagingMode || 'none'
   const lookupEnabled = Boolean(config.lookupEnabled)
+  const authMode = normalizeAuthMode(config.authMode, secrets)
 
   if (!baseUrl) {
     throw createError({ statusCode: 400, statusMessage: 'baseUrl is required' })
@@ -35,7 +37,7 @@ export async function runRestGeneric(ctx) {
 
   const headers = {}
   const apiKey = secrets.apiKey
-  if (apiKey) {
+  if (authMode !== 'none' && apiKey) {
     const headerName = String(config.authHeader || 'Authorization')
     const prefix = String(config.authPrefix || 'Bearer').trim()
     headers[headerName] = prefix ? `${prefix} ${apiKey}` : String(apiKey)
@@ -266,13 +268,31 @@ async function fetchPaged(opts) {
 }
 
 /**
+ * Join base URL + path without mangling query strings.
+ * Empty path or "/" → return base unchanged (avoids `?vs_currency=usd` + `/`).
  * @param {string} base
  * @param {string} path
  */
 function joinUrl(base, path) {
-  if (/^https?:\/\//i.test(path)) return path
-  const p = path.startsWith('/') ? path : `/${path}`
-  return `${base}${p}`
+  const raw = String(path ?? '').trim()
+  if (!raw || raw === '/') return base
+  if (/^https?:\/\//i.test(raw)) return raw
+  if (raw.startsWith('?') || raw.startsWith('#')) return `${base}${raw}`
+
+  const baseClean = String(base || '').replace(/\/$/, '')
+  const pathPart = raw.startsWith('/') ? raw : `/${raw}`
+  return `${baseClean}${pathPart}`
+}
+
+/**
+ * @param {unknown} authMode
+ * @param {Record<string, unknown>} secrets
+ */
+function normalizeAuthMode(authMode, secrets) {
+  const mode = String(authMode || '').trim().toLowerCase()
+  if (mode === 'none' || mode === 'api_key' || mode === 'bearer') return mode === 'bearer' ? 'api_key' : mode
+  // Legacy connections: send auth only when a secret is present.
+  return secrets?.apiKey ? 'api_key' : 'none'
 }
 
 /**
