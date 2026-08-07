@@ -23,4 +23,8 @@ export const agGridDarkTheme = themeQuartz.withParams({
   tooltipBackgroundColor: '#1a1e25',
   tooltipTextColor: '#e8eef4',
   fontFamily: "'DM Sans', system-ui, sans-serif",
+  // Subtle column separators (default Quartz often hides these).
+  columnBorder: true,
+  rowBorder: true,
+  headerColumnBorder: true,
 })

@@ -32,6 +32,24 @@ export const appNavGroups = [
     ],
   },
   {
+    id: 'reports',
+    label: 'Reports',
+    to: '/reports',
+    children: [
+      {
+        id: 'reports-view',
+        label: 'View Reports',
+        to: '/reports',
+      },
+      {
+        id: 'reports-configure',
+        label: 'Configure Reports',
+        to: '/reports/configure',
+        roles: ['platform', 'orgAdmin'],
+      },
+    ],
+  },
+  {
     id: 'demo',
     label: 'Demo',
     children: [

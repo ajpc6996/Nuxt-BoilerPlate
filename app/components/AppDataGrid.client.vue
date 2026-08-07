@@ -152,11 +152,19 @@ const statusMessage = computed(() => {
 })
 
 /**
- * @param {{ data?: { id?: string|number } }} params
+ * Stable unique id per row. Prefer `__rowId` (assigned on load), then business `id`.
+ * Never return undefined — duplicate/missing ids make client-side sort drop rows.
+ * @param {{ data?: Record<string, unknown>, node?: { rowIndex?: number|null } }} params
  */
 const getRowId = (params) => {
-  if (params?.data?.id == null) return undefined
-  return String(params.data.id)
+  const data = params?.data
+  if (data && data.__rowId != null && data.__rowId !== '') {
+    return String(data.__rowId)
+  }
+  if (data && data.id != null && data.id !== '') {
+    return String(data.id)
+  }
+  return `idx_${params?.node?.rowIndex ?? 'x'}`
 }
 
 const onGridReady = (event) => {
@@ -187,7 +195,13 @@ const loadFromAdapter = async () => {
 
     if (props.adapter.mode === 'local') {
       const rows = await props.adapter.load()
-      rowData.value = Array.isArray(rows) ? rows : []
+      // Always stamp a unique __rowId so getRowId never collides (joined
+      // reports often share business `id` values; missing id made all rows
+      // undefined and client-side sort dropped them).
+      rowData.value = (Array.isArray(rows) ? rows : []).map((row, index) => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return row
+        return { ...row, __rowId: `r${index}` }
+      })
       datasource.value = null
       emit('loaded', { mode: 'local', rowCount: rowData.value.length })
     } else if (props.adapter.mode === 'rest') {
