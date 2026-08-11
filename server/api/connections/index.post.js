@@ -17,12 +17,19 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const { user } = await requireOrgAdmin(event, organizationId)
+  const { user, isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
   const admin = useSupabaseAdmin()
+
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    feature: 'dataSources',
+    limitKey: 'maxConnections',
+  })
 
   const { data: typeRow, error: typeError } = await admin
     .from('connector_types')
-    .select('id, is_enabled')
+    .select('id, is_enabled, is_system')
     .eq('id', connectorTypeId)
     .maybeSingle()
 
@@ -31,6 +38,15 @@ export default defineEventHandler(async (event) => {
   }
   if (!typeRow.is_enabled) {
     throw createError({ statusCode: 400, statusMessage: 'Connector type is disabled' })
+  }
+
+  // Non-system connector types require the connectorTypes feature flag
+  if (typeRow.is_system === false && !isPlatformAdmin) {
+    await assertLicenceAllows(admin, {
+      organizationId,
+      isPlatformAdmin,
+      feature: 'connectorTypes',
+    })
   }
 
   const { data: connection, error } = await admin

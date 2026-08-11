@@ -13,9 +13,15 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const { user } = await requireOrgAdmin(event, organizationId)
+  const { user, isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
 
   const admin = useSupabaseAdmin()
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    feature: 'dataSources',
+  })
+
   const { data: dataSource } = await admin
     .from('data_sources')
     .select('id')
@@ -31,5 +37,6 @@ export default defineEventHandler(async (event) => {
     dataSourceId: id,
     mode,
     userId: user.id,
+    isPlatformAdmin,
   })
 })

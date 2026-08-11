@@ -23,6 +23,12 @@ export default defineEventHandler(async (event) => {
   const member = await requireOrgMember(event, organizationId)
   const admin = useSupabaseAdmin()
 
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin: member.isPlatformAdmin,
+    feature: 'export',
+  })
+
   let queryConfig = normalizeReportQueryConfig(body?.queryConfig ?? body?.query_config)
   let reportName = 'report'
 

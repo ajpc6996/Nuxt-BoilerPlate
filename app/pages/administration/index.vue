@@ -44,8 +44,20 @@ const allCards = [
   {
     label: 'Organizations',
     to: '/platform/organizations',
-    description: 'Create organizations, set MFA mode, and choose the active org (platform only).',
+    description: 'Create organizations, set MFA mode, assign licences, and choose the active org (platform only).',
     roles: ['platform'],
+  },
+  {
+    label: 'Licence & usage',
+    to: '/administration/licence',
+    description: 'View plan, feature flags, and hard usage limits for the active organization.',
+    roles: ['platform', 'orgAdmin'],
+  },
+  {
+    label: 'Billing',
+    to: '/administration/billing',
+    description: 'Mock checkout and portal — upgrade plans and capacity without charging a card.',
+    roles: ['platform', 'orgAdmin'],
   },
   {
     label: 'Users',

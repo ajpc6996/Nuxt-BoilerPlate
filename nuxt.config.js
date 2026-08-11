@@ -65,6 +65,12 @@ export default defineNuxtConfig({
       || '',
     // AES key material for connection_secrets (any long random string)
     connectorSecretsKey: process.env.CONNECTOR_SECRETS_KEY || '',
+    // HMAC secret for licence tokens (server-only). Falls back to supabase secret.
+    licenceSigningSecret:
+      process.env.LICENCE_SIGNING_SECRET
+      || process.env.SUPABASE_SECRET_KEY
+      || process.env.SUPABASE_SERVICE_ROLE_KEY
+      || '',
     // LLM for connector-type generation: gemini | openai (auto if unset)
     llmProvider: process.env.LLM_PROVIDER || '',
     geminiApiKey: process.env.GEMINI_API_KEY || '',

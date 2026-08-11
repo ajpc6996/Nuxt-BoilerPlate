@@ -3,7 +3,7 @@
     <div>
       <h1 class="font-display text-3xl font-semibold text-[var(--ink)]">Organizations</h1>
       <p class="mt-2 text-sm text-[var(--mute)]">
-        Platform only. Creating an org adds you as an active member with the Admin role.
+        Platform only. Creating an org adds you as an Admin member and assigns the default trial licence.
       </p>
     </div>
 
@@ -69,6 +69,63 @@
       </button>
     </form>
 
+    <section
+      v-if="settings"
+      class="panel mt-8 grid gap-3 p-5 sm:grid-cols-4"
+    >
+      <h2 class="sm:col-span-4 text-sm font-semibold text-[var(--ink)]">
+        Licence policy (platform)
+      </h2>
+      <div>
+        <label class="text-[10px] uppercase tracking-wide text-[var(--mute-soft)]">Grace days</label>
+        <input
+          v-model.number="settingsForm.graceDays"
+          type="number"
+          min="0"
+          max="90"
+          class="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+        >
+      </div>
+      <div>
+        <label class="text-[10px] uppercase tracking-wide text-[var(--mute-soft)]">Data retention days</label>
+        <input
+          v-model.number="settingsForm.dataRetentionDays"
+          type="number"
+          min="0"
+          max="365"
+          class="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+        >
+      </div>
+      <div>
+        <label class="text-[10px] uppercase tracking-wide text-[var(--mute-soft)]">Renew refresh hours</label>
+        <input
+          v-model.number="settingsForm.renewRefreshHours"
+          type="number"
+          min="0"
+          max="720"
+          class="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm text-[var(--ink)]"
+        >
+      </div>
+      <div class="flex items-end gap-2 sm:col-span-4 sm:justify-end">
+        <button
+          type="button"
+          class="btn-secondary !px-3 !py-1.5 text-sm"
+          :disabled="settingsBusy"
+          @click="saveSettings"
+        >
+          {{ settingsBusy ? 'Saving…' : 'Save policy' }}
+        </button>
+        <button
+          type="button"
+          class="btn-secondary !px-3 !py-1.5 text-sm"
+          :disabled="purgeBusy"
+          @click="runDuePurges"
+        >
+          {{ purgeBusy ? 'Purging…' : 'Run due data purges' }}
+        </button>
+      </div>
+    </section>
+
     <p
       v-if="errorMessage"
       class="mt-3 text-sm text-[var(--danger)]"
@@ -86,38 +143,73 @@
       <li
         v-for="org in filteredOrgs"
         :key="org.id"
-        class="panel flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+        class="panel px-4 py-3"
       >
-        <div>
-          <p class="font-medium text-[var(--ink)]">{{ org.name }}</p>
-          <p class="text-sm text-[var(--mute)]">
-            {{ org.slug }} · MFA {{ org.mfa_mode }}
-          </p>
-        </div>
-        <div class="flex items-center gap-2">
-          <select
-            class="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
-            :value="org.mfa_mode"
-            @change="(e) => updateMfa(org.id, e.target.value)"
-          >
-            <option value="off">off</option>
-            <option value="optional">optional</option>
-            <option value="required">required</option>
-          </select>
-          <button
-            type="button"
-            class="btn-secondary !px-3 !py-1.5"
-            @click="activate(org)"
-          >
-            Set active
-          </button>
-          <button
-            type="button"
-            class="btn-secondary !px-3 !py-1.5"
-            @click="goUsers(org)"
-          >
-            Users
-          </button>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="font-medium text-[var(--ink)]">{{ org.name }}</p>
+            <p class="text-sm text-[var(--mute)]">
+              {{ org.slug }} · MFA {{ org.mfa_mode }}
+              <span v-if="licenceMap[org.id]">
+                · {{ licenceMap[org.id].planKey }} ({{ licenceMap[org.id].status }})
+              </span>
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <select
+              class="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
+              :value="org.mfa_mode"
+              @change="(e) => updateMfa(org.id, e.target.value)"
+            >
+              <option value="off">off</option>
+              <option value="optional">optional</option>
+              <option value="required">required</option>
+            </select>
+            <select
+              class="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
+              :value="assignDraft[org.id]?.planKey || licenceMap[org.id]?.planKey || 'trial'"
+              @change="(e) => setAssignField(org.id, 'planKey', e.target.value)"
+            >
+              <option
+                v-for="plan in plans"
+                :key="plan.key"
+                :value="plan.key"
+              >
+                {{ plan.name }}
+              </option>
+            </select>
+            <input
+              type="number"
+              min="1"
+              max="365"
+              class="w-20 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
+              :value="assignDraft[org.id]?.periodDays || 30"
+              title="Period days"
+              @change="(e) => setAssignField(org.id, 'periodDays', Number(e.target.value))"
+            >
+            <button
+              type="button"
+              class="btn-secondary !px-3 !py-1.5"
+              :disabled="assignBusyId === org.id"
+              @click="assignLicence(org)"
+            >
+              {{ assignBusyId === org.id ? '…' : 'Assign' }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-3 !py-1.5"
+              @click="activate(org)"
+            >
+              Set active
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-3 !py-1.5"
+              @click="goUsers(org)"
+            >
+              Users
+            </button>
+          </div>
         </div>
       </li>
       <li
@@ -144,6 +236,15 @@ const nuxtApp = useNuxtApp()
 const { setActiveOrganizationAsPlatform } = useOrganization()
 
 const orgs = ref([])
+const plans = ref([])
+const settings = ref(null)
+const settingsForm = reactive({
+  graceDays: 3,
+  dataRetentionDays: 15,
+  renewRefreshHours: 72,
+})
+const licenceMap = ref({})
+const assignDraft = ref({})
 const listFilter = ref('')
 const showAdd = ref(false)
 const name = ref('')
@@ -152,17 +253,62 @@ const mfaMode = ref('optional')
 const errorMessage = ref('')
 const notice = ref('')
 const busy = ref(false)
+const settingsBusy = ref(false)
+const purgeBusy = ref(false)
+const assignBusyId = ref('')
 
 const filteredOrgs = computed(() => {
   const q = listFilter.value.trim().toLowerCase()
   if (!q) return orgs.value
   return orgs.value.filter((org) => {
-    const hay = [org.name, org.slug, org.mfa_mode]
+    const lic = licenceMap.value[org.id]
+    const hay = [org.name, org.slug, org.mfa_mode, lic?.planKey, lic?.status]
       .map((v) => String(v || '').toLowerCase())
       .join(' ')
     return hay.includes(q)
   })
 })
+
+function setAssignField(orgId, key, value) {
+  assignDraft.value = {
+    ...assignDraft.value,
+    [orgId]: {
+      planKey: assignDraft.value[orgId]?.planKey || licenceMap.value[orgId]?.planKey || 'trial',
+      periodDays: assignDraft.value[orgId]?.periodDays || 30,
+      [key]: value,
+    },
+  }
+}
+
+const loadPlans = async () => {
+  const res = await authedFetch('/api/platform/plans')
+  plans.value = res.items || []
+  settings.value = res.settings || null
+  if (res.settings) {
+    settingsForm.graceDays = res.settings.graceDays
+    settingsForm.dataRetentionDays = res.settings.dataRetentionDays
+    settingsForm.renewRefreshHours = res.settings.renewRefreshHours
+  }
+}
+
+const loadLicences = async () => {
+  const next = {}
+  await Promise.all(
+    (orgs.value || []).map(async (org) => {
+      try {
+        const res = await authedFetch(`/api/platform/organizations/${org.id}/licence`)
+        next[org.id] = {
+          planKey: res.licence?.planKey,
+          status: res.licence?.status,
+        }
+      }
+      catch {
+        // org may predate migration
+      }
+    }),
+  )
+  licenceMap.value = next
+}
 
 const load = async () => {
   const { data, error } = await supabase
@@ -174,9 +320,18 @@ const load = async () => {
     return
   }
   orgs.value = data || []
+  await loadLicences()
 }
 
-onMounted(load)
+onMounted(async () => {
+  try {
+    await loadPlans()
+  }
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Failed to load plans'
+  }
+  await load()
+})
 
 const createOrg = async () => {
   errorMessage.value = ''
@@ -196,7 +351,7 @@ const createOrg = async () => {
     slug.value = ''
     mfaMode.value = 'optional'
     showAdd.value = false
-    notice.value = `Created ${res.item.name} — you are an Admin member`
+    notice.value = `Created ${res.item.name} — trial licence assigned`
 
     if (typeof nuxtApp.$hydrateAuthState === 'function') {
       await nuxtApp.$hydrateAuthState()
@@ -212,17 +367,84 @@ const createOrg = async () => {
   }
 }
 
+const saveSettings = async () => {
+  settingsBusy.value = true
+  errorMessage.value = ''
+  notice.value = ''
+  try {
+    const res = await authedFetch('/api/platform/licence-settings', {
+      method: 'PUT',
+      body: { ...settingsForm },
+    })
+    settings.value = res.settings
+    notice.value = 'Licence policy saved'
+  }
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Save failed'
+  }
+  finally {
+    settingsBusy.value = false
+  }
+}
+
+const runDuePurges = async () => {
+  purgeBusy.value = true
+  errorMessage.value = ''
+  notice.value = ''
+  try {
+    const res = await authedFetch('/api/platform/licence-purge', {
+      method: 'POST',
+      body: {},
+    })
+    notice.value = `Purge batch: ${res.processed || 0} organization(s) processed`
+  }
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Purge failed'
+  }
+  finally {
+    purgeBusy.value = false
+  }
+}
+
+const assignLicence = async (org) => {
+  assignBusyId.value = org.id
+  errorMessage.value = ''
+  notice.value = ''
+  try {
+    const draft = assignDraft.value[org.id] || {}
+    await authedFetch(`/api/platform/organizations/${org.id}/licence`, {
+      method: 'PUT',
+      body: {
+        planKey: draft.planKey || licenceMap.value[org.id]?.planKey || 'trial',
+        periodDays: draft.periodDays || 30,
+        status: draft.planKey === 'trial' ? 'trialing' : 'active',
+      },
+    })
+    notice.value = `Licence updated for ${org.name}`
+    await loadLicences()
+  }
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Assign failed'
+  }
+  finally {
+    assignBusyId.value = ''
+  }
+}
+
 const updateMfa = async (id, mode) => {
   errorMessage.value = ''
-  const { error } = await supabase
-    .from('organizations')
-    .update({ mfa_mode: mode })
-    .eq('id', id)
-  if (error) {
-    errorMessage.value = error.message
-    return
+  notice.value = ''
+  try {
+    await authedFetch(`/api/platform/organizations/${id}/mfa`, {
+      method: 'PUT',
+      body: { mfaMode: mode },
+    })
+    await load()
   }
-  await load()
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'MFA update failed'
+    await load()
+  }
 }
 
 const activate = async (org) => {

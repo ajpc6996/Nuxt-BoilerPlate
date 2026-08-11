@@ -134,6 +134,7 @@ async function loadMembershipsViaApi(supabase, orgStore, session) {
     const memberships = res?.memberships || []
     orgStore.setMemberships(memberships)
     orgStore.setRolesByOrg(res?.rolesByOrg || {})
+    orgStore.setLicencesByOrg(res?.licencesByOrg || {})
 
     const saved = orgStore.restoreActiveOrganizationId()
     const validSaved = memberships.some((m) => m.organization_id === saved)
@@ -150,6 +151,7 @@ async function loadMembershipsViaApi(supabase, orgStore, session) {
     orgStore.setActiveOrganizationId(null)
     orgStore.setRolesInActiveOrg([])
     orgStore.setRolesByOrg({})
+    orgStore.setLicencesByOrg({})
   }
   finally {
     orgStore.loading = false

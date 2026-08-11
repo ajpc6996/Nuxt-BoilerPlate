@@ -28,6 +28,7 @@ export function mergeConnectorConfig(connectionConfig, sourceConfig) {
  *   userId?: string,
  *   fetchStack?: string[],
  *   returnRows?: boolean,
+ *   isPlatformAdmin?: boolean,
  * }} opts
  */
 export async function executeDataSource(opts) {
@@ -43,6 +44,14 @@ export async function executeDataSource(opts) {
 
   if (dsError || !dataSource) {
     throw createError({ statusCode: 404, statusMessage: 'Data source not found' })
+  }
+
+  if (mode === 'run' && !opts.isPlatformAdmin) {
+    await assertLicenceAllows(admin, {
+      organizationId: dataSource.organization_id,
+      isPlatformAdmin: false,
+      feature: 'dataSources',
+    })
   }
 
   if (fetchStack.includes(dataSource.id)) {
@@ -166,6 +175,15 @@ export async function executeDataSource(opts) {
     let rowsWritten = 0
 
     if (mode === 'run') {
+      if (!opts.isPlatformAdmin) {
+        await assertLicenceAllows(admin, {
+          organizationId: dataSource.organization_id,
+          isPlatformAdmin: false,
+          limitKey: 'maxIngestRowsPerMonth',
+          delta: sample.length,
+        })
+      }
+
       const { data: written, error: ingestError } = await admin.rpc(
         'ingest_replace_rows',
         {

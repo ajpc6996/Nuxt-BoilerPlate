@@ -7,13 +7,20 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'organizationId is required' })
   }
 
-  const { user } = await requireOrgAdmin(event, organizationId)
+  const { user, isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
   const parsed = parseReportBody(body)
   if (!parsed.name) {
     throw createError({ statusCode: 400, statusMessage: 'Name is required' })
   }
 
   const admin = useSupabaseAdmin()
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    feature: 'reports',
+    limitKey: 'maxReports',
+  })
+
   const { data: report, error } = await admin
     .from('reports')
     .insert({

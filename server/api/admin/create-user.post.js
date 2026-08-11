@@ -11,9 +11,15 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  await requireOrgAdmin(event, organizationId)
-
+  const { isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
   const admin = useSupabaseAdmin()
+
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    limitKey: 'maxUsers',
+  })
+
   const origin = getRequestURL(event).origin
 
   const { data, error } = await admin.auth.admin.createUser({
@@ -56,11 +62,11 @@ export default defineEventHandler(async (event) => {
 
   // Prefer sending via resetPasswordForEmail on behalf of recovery flow
   if (linkError) {
-    // Fallback: invite-style recovery mail
     await admin.auth.resetPasswordForEmail(email, {
       redirectTo: `${origin}/auth/reset-password`,
     })
-  } else {
+  }
+  else {
     await admin.auth.resetPasswordForEmail(email, {
       redirectTo: `${origin}/auth/reset-password`,
     })

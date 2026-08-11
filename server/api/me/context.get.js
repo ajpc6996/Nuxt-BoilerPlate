@@ -118,5 +118,49 @@ async function loadContext(client, userId, asAdmin) {
     isPlatformAdmin: Boolean(profile?.is_platform_admin),
     memberships: items,
     rolesByOrg,
+    licencesByOrg: await loadLicencesByOrg(client, items),
   }
+}
+
+/**
+ * Compact licence snapshots for UI (not used for enforcement).
+ * @param {import('@supabase/supabase-js').SupabaseClient} client
+ * @param {Array<{ organization_id: string }>} memberships
+ */
+async function loadLicencesByOrg(client, memberships) {
+  const orgIds = [...new Set((memberships || []).map((m) => m.organization_id).filter(Boolean))]
+  if (!orgIds.length) return {}
+
+  const { data, error } = await client
+    .from('organization_licences')
+    .select('organization_id, plan_key, status, features, limits, trial_ends_at, current_period_end, grace_ends_at, data_purge_at, data_purged_at, overrides')
+    .in('organization_id', orgIds)
+
+  if (error) {
+    console.warn('[me/context] licences load failed', error.message)
+    return {}
+  }
+
+  /** @type {Record<string, object>} */
+  const map = {}
+  for (const row of data || []) {
+    const merged = {
+      features: row.features,
+      limits: row.limits,
+    }
+    // Apply overrides shallowly for display
+    const overrides = row.overrides && typeof row.overrides === 'object' ? row.overrides : {}
+    map[row.organization_id] = {
+      planKey: row.plan_key,
+      status: row.status,
+      features: { ...(merged.features || {}), ...(overrides.features || {}) },
+      limits: { ...(merged.limits || {}), ...(overrides.limits || {}) },
+      trialEndsAt: row.trial_ends_at,
+      currentPeriodEnd: row.current_period_end,
+      graceEndsAt: row.grace_ends_at,
+      dataPurgeAt: row.data_purge_at,
+      dataPurgedAt: row.data_purged_at,
+    }
+  }
+  return map
 }

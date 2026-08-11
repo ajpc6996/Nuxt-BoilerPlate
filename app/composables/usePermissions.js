@@ -41,6 +41,19 @@ export function usePermissions() {
     return false
   }
 
+  /**
+   * Display-only feature gate. Server enforcement is authoritative.
+   * Platform admins always pass.
+   * @param {string} feature
+   */
+  function hasFeature(feature) {
+    if (authStore.isPlatformAdmin) return true
+    const licence = orgStore.activeLicence
+    if (!licence) return true
+    if (['locked', 'canceled'].includes(licence.status)) return false
+    return licence.features?.[feature] !== false
+  }
+
   return {
     canOpenAdministration,
     canUseAdministration,
@@ -48,5 +61,6 @@ export function usePermissions() {
     canUsePlatform,
     canConfigureConnections,
     allowsRoles,
+    hasFeature,
   }
 }

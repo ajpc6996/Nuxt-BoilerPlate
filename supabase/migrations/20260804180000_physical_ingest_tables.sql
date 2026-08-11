@@ -1,5 +1,7 @@
 -- Physical ingest landing tables live in schema "ingest".
 -- Destination name on a connection (e.g. ingest_traktor) → ingest.ingest_traktor
+-- NOTE: Later migration 20260811150000_ingest_lockdown.sql revokes authenticated
+-- access and enables deny-all RLS. Fresh installs still apply this file first, then lockdown.
 
 create schema if not exists ingest;
 

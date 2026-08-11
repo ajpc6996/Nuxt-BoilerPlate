@@ -14,6 +14,8 @@ export function useOrganization() {
     loading,
   } = storeToRefs(orgStore)
 
+  const activeLicence = computed(() => orgStore.activeLicence)
+
   /**
    * @param {string} orgId
    */
@@ -55,6 +57,7 @@ export function useOrganization() {
     activeOrganization,
     rolesInActiveOrg,
     isOrgAdmin,
+    activeLicence,
     loading,
     setActiveOrganization,
     setActiveOrganizationAsPlatform,

@@ -1,0 +1,39 @@
+# Licensing & entitlements
+
+Org-level licences control **feature access** and **hard usage limits**.
+
+## Source of truth
+
+- Tables: `licence_plans`, `organization_licences`, `organization_usage`, `licence_platform_settings`
+- Migrations: `20260811120000_licensing.sql`, `20260811140000_licence_mfa_and_purge.sql`
+- Resolution / enforcement: `server/utils/licence.js` (always via secret key)
+- Shared shapes: `shared/licence.js`
+- Mock billing: `shared/billing.js`, `server/utils/billing.js`, `server/api/billing/*` (no real Stripe charges)
+
+Clients may **display** entitlements from `/api/me/context` or `/api/licence/current`. They must **never** unlock features locally.
+
+## Ingest schema lockdown
+
+- `ingest.*` tables: **no** `authenticated` SELECT; schema USAGE revoked from `authenticated`.
+- RLS enabled with deny-all policy for `authenticated` (defense in depth).
+- Access only via `service_role` / Nitro admin client and SECURITY DEFINER RPCs.
+- Migration: `20260811150000_ingest_lockdown.sql` (updates `ensure_ingest_table`).
+
+## MFA (`features.mfaRequired` + `organizations.mfa_mode`)
+
+- When the effective licence has `mfaRequired: true`, server sets `organizations.mfa_mode = 'required'`.
+- Platform cannot lower MFA below `required` while that flag is on (`PUT /api/platform/organizations/:id/mfa`).
+- Auth middleware blocks aal1 access in the UI when org/licence requires MFA.
+- **API:** `requireOrgMember` enforces aal2 when `mfa_mode === 'required'` or licence `mfaRequired` (member read paths: reports/dashboards/licence). Admin APIs already require aal2.
+- Admin/platform routes still always need aal2.
+
+## Retention purge
+
+- Locked licences set `data_purge_at` (grace → lock → retain N days from platform settings).
+- When due: delete ingest.* rows for the org, `connection_ingest_rows`, `connection_runs`; clear data-source sync_state; set `data_purged_at`.
+- Triggers on licence resolve and via `POST /api/platform/licence-purge` (batch or single).
+- Renew/assign clears purge markers.
+
+## Mock billing
+
+Catalog + checkout + portal update licences without charging cards. Real Stripe comes later.

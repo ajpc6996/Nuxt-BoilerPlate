@@ -8,6 +8,8 @@ export const useOrganizationStore = defineStore('organization', () => {
   const rolesInActiveOrg = ref([])
   /** @type {import('vue').Ref<Record<string, Array<{ id: string, name: string }>>>} */
   const rolesByOrg = ref({})
+  /** @type {import('vue').Ref<Record<string, object>>} */
+  const licencesByOrg = ref({})
   const loading = ref(false)
 
   const activeOrganization = computed(() =>
@@ -18,6 +20,12 @@ export const useOrganizationStore = defineStore('organization', () => {
   const isOrgAdmin = computed(() =>
     rolesInActiveOrg.value.some((role) => role.name === 'Admin'),
   )
+
+  const activeLicence = computed(() => {
+    const id = activeOrganizationId.value
+    if (!id) return null
+    return licencesByOrg.value[id] || null
+  })
 
   /**
    * @param {Array} next
@@ -60,6 +68,13 @@ export const useOrganizationStore = defineStore('organization', () => {
   }
 
   /**
+   * @param {Record<string, object>} next
+   */
+  function setLicencesByOrg(next) {
+    licencesByOrg.value = next && typeof next === 'object' ? next : {}
+  }
+
+  /**
    * @param {string|null} orgId
    */
   function applyRolesForOrg(orgId) {
@@ -77,6 +92,7 @@ export const useOrganizationStore = defineStore('organization', () => {
     activeOrganizationId.value = null
     rolesInActiveOrg.value = []
     rolesByOrg.value = {}
+    licencesByOrg.value = {}
   }
 
   return {
@@ -85,6 +101,8 @@ export const useOrganizationStore = defineStore('organization', () => {
     activeOrganization,
     rolesInActiveOrg,
     rolesByOrg,
+    licencesByOrg,
+    activeLicence,
     loading,
     isOrgAdmin,
     setMemberships,
@@ -92,6 +110,7 @@ export const useOrganizationStore = defineStore('organization', () => {
     restoreActiveOrganizationId,
     setRolesInActiveOrg,
     setRolesByOrg,
+    setLicencesByOrg,
     applyRolesForOrg,
     reset,
   }

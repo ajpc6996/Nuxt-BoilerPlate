@@ -10,9 +10,16 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  await requireOrgAdmin(event, organizationId)
-
+  const { isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
   const admin = useSupabaseAdmin()
+
+  // Seat count is active-only; block invites once active seats are full.
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    limitKey: 'maxUsers',
+  })
+
   const origin = getRequestURL(event).origin
 
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {

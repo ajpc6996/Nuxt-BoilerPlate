@@ -23,8 +23,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: validation.error })
   }
 
-  const { user } = await requireOrgAdmin(event, organizationId)
+  const { user, isPlatformAdmin } = await requireOrgAdmin(event, organizationId)
   const admin = useSupabaseAdmin()
+
+  await assertLicenceAllows(admin, {
+    organizationId,
+    isPlatformAdmin,
+    feature: 'dataSources',
+    limitKey: 'maxDataSources',
+  })
 
   const { data: connection, error: connError } = await admin
     .from('connections')

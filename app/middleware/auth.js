@@ -4,6 +4,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return
 
   const authStore = useAuthStore()
+  const orgStore = useOrganizationStore()
 
   // Wait briefly for client plugin hydration on first paint
   if (!authStore.initialized) {
@@ -18,12 +19,43 @@ export default defineNuxtRouteMiddleware(async (to) => {
     })
   }
 
+  // Supabase MFA challenge pending (enrolled factor, not yet verified)
   if (authStore.needsMfaChallenge && to.path !== '/auth/mfa') {
     return navigateTo({
       path: '/auth/mfa',
       query: { redirect: to.fullPath },
       replace: true,
     })
+  }
+
+  // Org / licence policy requires MFA for app use (not only admin routes)
+  const exemptPaths = new Set([
+    '/auth/mfa',
+    '/me/security',
+    '/login',
+    '/auth/callback',
+    '/auth/reset-password',
+  ])
+  if (!exemptPaths.has(to.path) && !authStore.isAal2) {
+    const org = orgStore.activeOrganization
+    const licence = orgStore.activeLicence
+    const orgRequires = org?.mfa_mode === 'required'
+    const licenceRequires = Boolean(licence?.features?.mfaRequired)
+    if (orgRequires || licenceRequires) {
+      // Enrolled but not stepped up → challenge; otherwise enroll first
+      if (authStore.needsMfaChallenge || authStore.nextAal === 'aal2') {
+        return navigateTo({
+          path: '/auth/mfa',
+          query: { redirect: to.fullPath },
+          replace: true,
+        })
+      }
+      return navigateTo({
+        path: '/me/security',
+        query: { redirect: to.fullPath, reason: 'org-mfa' },
+        replace: true,
+      })
+    }
   }
 })
 

@@ -1,24 +1,29 @@
 <template>
-  <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
-    <div class="flex flex-wrap items-start justify-between gap-4">
+  <div
+    ref="shellEl"
+    class="report-view mx-auto flex w-full max-w-[90rem] min-h-0 flex-1 flex-col px-2 py-2 sm:px-3 sm:py-3 lg:px-4"
+    :class="isFullscreen ? 'report-view--fullscreen' : ''"
+  >
+    <header class="report-view__header flex shrink-0 flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
-        <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
+        <h1 class="truncate font-display text-xl font-semibold tracking-tight text-[var(--ink)] sm:text-2xl">
           {{ report?.name || (pending ? 'Loading…' : 'Report') }}
         </h1>
         <p
-          v-if="report?.description"
-          class="mt-2 max-w-2xl text-sm text-[var(--mute)]"
-        >
-          {{ report.description }}
-        </p>
-        <p
-          v-if="report"
-          class="mt-2 text-[10px] uppercase tracking-wide text-[var(--mute-soft)]"
+          v-if="report && !isFullscreen"
+          class="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--mute-soft)]"
         >
           {{ report.visibility }} · {{ rowCountLabel }}
         </p>
+        <p
+          v-else-if="report && isFullscreen"
+          class="mt-0.5 text-xs text-[var(--mute)]"
+        >
+          {{ rowCountLabel }}
+        </p>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+
+      <div class="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
           class="btn-secondary !px-3 !py-1.5 text-sm"
@@ -43,49 +48,91 @@
         >
           Excel
         </button>
+
+        <div class="inline-flex shrink-0 items-center gap-1">
+          <button
+            v-if="!isFullscreen"
+            type="button"
+            class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+            title="Full screen"
+            aria-label="Full screen"
+            @click="enterFullscreen"
+          >
+            <span aria-hidden="true">⛶</span>
+          </button>
+          <button
+            v-else
+            type="button"
+            class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-[var(--mute)] hover:border-[var(--border)] hover:text-[var(--ink)]"
+            title="Exit full screen"
+            aria-label="Exit full screen"
+            @click="exitFullscreen"
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 17l-5-5 5-5" />
+              <path d="M4 12h11a5 5 0 015 5v2" />
+            </svg>
+          </button>
+        </div>
+
         <NuxtLink
-          v-if="canConfigure"
-          :to="`/reports/configure/${reportId}`"
-          class="btn-secondary !px-3 !py-1.5 text-sm"
-        >
-          Configure
-        </NuxtLink>
-        <NuxtLink
+          v-if="!isFullscreen"
           to="/reports"
           class="btn-secondary !px-3 !py-1.5 text-sm"
         >
           All reports
         </NuxtLink>
       </div>
-    </div>
+    </header>
+
+    <p
+      v-if="notice"
+      class="mt-2 shrink-0 rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--ink)]"
+    >
+      {{ notice }}
+    </p>
 
     <p
       v-if="error"
-      class="panel mt-6 border-[var(--danger)] px-4 py-3 text-sm text-[var(--danger)]"
+      class="mt-2 shrink-0 rounded-md border border-[var(--danger)] px-3 py-2 text-sm text-[var(--danger)]"
     >
       {{ error }}
     </p>
 
     <div
       v-if="pending"
-      class="mt-8 text-sm text-[var(--mute)]"
+      class="mt-4 text-sm text-[var(--mute)]"
     >
       Loading report…
     </div>
 
     <div
       v-else-if="report"
-      class="panel mt-6 overflow-hidden p-2"
+      ref="gridShellRef"
+      class="report-view__grid mt-2 flex min-h-0 flex-1 flex-col"
     >
       <ClientOnly>
-        <AppDataGrid
-          :key="gridKey"
-          :column-defs="columnDefs"
-          :adapter="gridAdapter"
-          height="min(70vh, 640px)"
-          :pagination="true"
-          :pagination-page-size="pageSize"
-        />
+        <div class="min-h-0 flex-1">
+          <AppDataGrid
+            ref="gridRef"
+            :key="gridKey"
+            :column-defs="columnDefs"
+            :adapter="gridAdapter"
+            height="100%"
+            :pagination="true"
+            :pagination-page-size="pageSize"
+            @grid-ready="resizeGrid"
+          />
+        </div>
       </ClientOnly>
     </div>
   </div>
@@ -108,19 +155,22 @@ definePageMeta({
 const route = useRoute()
 const reportId = computed(() => String(route.params.id || ''))
 const { activeOrganization } = useOrganization()
-const { allowsRoles } = usePermissions()
 const authedFetch = useAuthedFetch()
 const supabase = useSupabase()
 
+const shellEl = ref(null)
+const gridShellRef = ref(null)
+const gridRef = ref(null)
 const report = ref(null)
 const rows = ref([])
 const pending = ref(true)
 const running = ref(false)
 const exporting = ref(false)
 const error = ref('')
+const notice = ref('')
 const gridKey = ref(0)
+const isFullscreen = ref(false)
 
-const canConfigure = computed(() => allowsRoles(['platform', 'orgAdmin']))
 const queryConfig = computed(() => normalizeReportQueryConfig(report.value?.query_config))
 const displayConfig = computed(() => normalizeReportDisplayConfig(report.value?.display_config))
 const pageSize = computed(() => displayConfig.value.pageSize || 25)
@@ -132,6 +182,50 @@ const gridAdapter = computed(() => createLocalDataAdapter(() => rows.value))
 useHead({
   title: computed(() => report.value?.name ? `${report.value.name} · Report` : 'Report'),
 })
+
+function resizeGrid() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const api = gridRef.value?.getApi?.()
+      api?.sizeColumnsToFit?.()
+    })
+  })
+}
+
+async function enterFullscreen() {
+  if (!import.meta.client || !shellEl.value) return
+  try {
+    if (shellEl.value.requestFullscreen) {
+      await shellEl.value.requestFullscreen()
+    }
+    else if (shellEl.value.webkitRequestFullscreen) {
+      await shellEl.value.webkitRequestFullscreen()
+    }
+  }
+  catch {
+    notice.value = 'Full screen was blocked by the browser'
+  }
+}
+
+async function exitFullscreen() {
+  if (!import.meta.client) return
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen()
+      else if (document.webkitExitFullscreen) await document.webkitExitFullscreen()
+    }
+  }
+  catch {
+    // ignore
+  }
+  isFullscreen.value = false
+}
+
+function onFullscreenChange() {
+  const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement)
+  isFullscreen.value = active
+  resizeGrid()
+}
 
 async function loadReport() {
   if (!activeOrganization.value?.id || !reportId.value) {
@@ -171,6 +265,7 @@ async function loadData() {
     })
     rows.value = res.rows || []
     gridKey.value += 1
+    resizeGrid()
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Query failed'
@@ -236,9 +331,83 @@ async function exportReport(format) {
   }
 }
 
+let gridResizeObserver = null
+
+function setupGridResizeObserver() {
+  if (!import.meta.client || gridResizeObserver || !gridShellRef.value) return
+  if (typeof ResizeObserver === 'undefined') return
+  gridResizeObserver = new ResizeObserver(() => resizeGrid())
+  gridResizeObserver.observe(gridShellRef.value)
+}
+
+onMounted(() => {
+  if (!import.meta.client) return
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange)
+})
+
+watch(
+  () => report.value,
+  () => {
+    nextTick(() => {
+      setupGridResizeObserver()
+      resizeGrid()
+    })
+  },
+)
+
+onBeforeUnmount(() => {
+  if (!import.meta.client) return
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
+  gridResizeObserver?.disconnect()
+  gridResizeObserver = null
+})
+
 watch(
   () => [activeOrganization.value?.id, reportId.value],
   () => loadReport(),
   { immediate: true },
 )
 </script>
+
+<style scoped>
+.report-view {
+  display: flex;
+  flex-direction: column;
+  /* Explicit height so child grid height: 100% resolves (min-height alone collapses). */
+  height: calc(100vh - 3.5rem);
+  min-height: calc(100vh - 3.5rem);
+  box-sizing: border-box;
+}
+
+.report-view__grid {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.report-view--fullscreen {
+  display: flex;
+  flex-direction: column;
+  max-width: none !important;
+  width: 100%;
+  height: 100vh;
+  max-height: 100vh;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+}
+
+.report-view--fullscreen .report-view__header {
+  position: relative;
+  z-index: 10;
+}
+
+.report-view--fullscreen .report-view__grid {
+  margin-top: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+</style>

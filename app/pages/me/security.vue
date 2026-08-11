@@ -6,6 +6,12 @@
     <p class="mt-2 text-[var(--mute)]">
       Enroll an authenticator app for MFA. Administration and Platform always require MFA verification.
     </p>
+    <p
+      v-if="orgMfaRequired"
+      class="mt-3 rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--ink)]"
+    >
+      Your active organization requires MFA (org policy and/or licence). Enroll a factor and complete verification to continue.
+    </p>
 
     <section class="panel mt-8 p-6">
       <h2 class="font-display text-xl font-semibold text-[var(--ink)]">Session</h2>
@@ -14,9 +20,20 @@
         <span class="font-medium text-[var(--accent-ink)]">{{ aal }}</span>
       </p>
       <label class="mt-4 flex items-center gap-2 text-sm text-[var(--ink)]">
-        <input v-model="mfaOptIn" type="checkbox" @change="saveOptIn">
+        <input
+          v-model="mfaOptIn"
+          type="checkbox"
+          :disabled="orgMfaRequired"
+          @change="saveOptIn"
+        >
         Opt in to MFA for my account (when org policy is optional)
       </label>
+      <p
+        v-if="orgMfaRequired"
+        class="mt-2 text-xs text-[var(--mute)]"
+      >
+        Opt-in is locked while the organization requires MFA.
+      </p>
       <p v-if="optInMessage" class="mt-2 text-sm text-[var(--accent-ink)]">{{ optInMessage }}</p>
     </section>
 
@@ -89,7 +106,15 @@ definePageMeta({
 useHead({ title: 'Security' })
 
 const supabase = useSupabase()
-const { aal, profile, updateProfile, refreshAuth } = useAuth()
+const route = useRoute()
+const { aal, profile, updateProfile, refreshAuth, isAal2 } = useAuth()
+const { activeOrganization, activeLicence } = useOrganization()
+
+const orgMfaRequired = computed(() => {
+  if (activeOrganization.value?.mfa_mode === 'required') return true
+  if (activeLicence.value?.features?.mfaRequired) return true
+  return route.query.reason === 'org-mfa'
+})
 
 const factors = ref([])
 const enrolling = ref(false)
@@ -102,6 +127,10 @@ const optInMessage = ref('')
 
 watch(profile, (value) => {
   mfaOptIn.value = Boolean(value?.mfa_opt_in)
+})
+
+watch(orgMfaRequired, (required) => {
+  if (required) mfaOptIn.value = true
 })
 
 const loadFactors = async () => {
@@ -171,6 +200,11 @@ const confirmEnroll = async () => {
   verifyCode.value = ''
   await refreshAuth()
   await loadFactors()
+
+  const redirect = route.query.redirect
+  if (isAal2.value && typeof redirect === 'string' && redirect.startsWith('/')) {
+    await navigateTo(redirect)
+  }
 }
 
 const unenroll = async (id) => {

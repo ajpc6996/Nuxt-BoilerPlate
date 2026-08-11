@@ -104,6 +104,18 @@ export const appNavGroups = [
         roles: ['platform'],
       },
       {
+        id: 'admin-licence',
+        label: 'Licence & usage',
+        to: '/administration/licence',
+        roles: ['platform', 'orgAdmin'],
+      },
+      {
+        id: 'admin-billing',
+        label: 'Billing',
+        to: '/administration/billing',
+        roles: ['platform', 'orgAdmin'],
+      },
+      {
         id: 'admin-users',
         label: 'Users',
         to: '/administration/users',
