@@ -67,7 +67,7 @@
             </p>
             <p class="truncate text-[11px] text-[var(--mute)]">
               {{ form.name || 'Untitled' }}
-              · {{ form.visibility }}
+              · {{ visibilitySummary }}
               <span v-if="toolsMenuEnabled"> · tools on</span>
             </p>
           </div>
@@ -124,21 +124,24 @@
             class="flex flex-col gap-1.5"
           >
             <label class="text-[10px] font-medium uppercase tracking-wide text-[var(--mute-soft)]">Roles that can view</label>
-            <div class="flex flex-wrap gap-1.5">
-              <label
-                v-for="role in orgRoles"
-                :key="role.id"
-                class="flex items-center gap-1.5 rounded border border-[var(--border)] px-1.5 py-0.5 text-[11px] text-[var(--ink)]"
-              >
-                <input
-                  v-model="form.roleIds"
-                  type="checkbox"
-                  :value="role.id"
-                  class="accent-[var(--accent)]"
-                >
-                {{ role.name }}
-              </label>
-            </div>
+            <MultiSelect
+              v-model="form.roleIds"
+              class="w-full"
+              display="chip"
+              filter
+              show-clear
+              append-to="body"
+              :options="orgRoles"
+              option-label="name"
+              option-value="id"
+              placeholder="Select roles…"
+            />
+            <p
+              v-if="!orgRoles.length"
+              class="text-[11px] text-[var(--danger)]"
+            >
+              No roles found for this organization. Create roles under Administration → Roles.
+            </p>
           </div>
         </div>
       </section>
@@ -853,6 +856,7 @@ import {
   widgetMeta,
 } from '~~/shared/dashboard.js'
 import { normalizeDisplayConfig, normalizeDashboardLayout, resolveLayoutCollisions } from '~~/shared/dashboardLayout.js'
+import MultiSelect from 'openvue/multiselect'
 
 definePageMeta({
   layout: 'app',
@@ -936,10 +940,19 @@ const isScalarWidget = computed(() =>
 
 /** Chart types that expose vue-data-ui user-options toolbar. */
 const supportsChartToolbar = computed(() =>
-  ['line', 'bar', 'pie', 'donut', 'gauge'].includes(widgetForm.widgetType),
+  ['line', 'bar', 'pie', 'donut', 'polar', 'gauge'].includes(widgetForm.widgetType),
 )
 
 useHead(() => ({ title: form.name || 'Edit dashboard' }))
+
+const visibilitySummary = computed(() => {
+  if (form.visibility !== 'role') return form.visibility
+  const names = orgRoles.value
+    .filter((role) => (form.roleIds || []).includes(role.id))
+    .map((role) => role.name)
+  if (!names.length) return 'role-limited (no roles selected)'
+  return `role-limited · ${names.join(', ')}`
+})
 
 async function loadIngestTables() {
   if (!activeOrganization.value?.id) return
@@ -958,18 +971,18 @@ async function loadIngestTables() {
 
 async function loadRoles() {
   if (!activeOrganization.value?.id) return
-  try {
-    const client = useSupabaseClient()
-    const { data } = await client
-      .from('roles')
-      .select('id, name')
-      .eq('organization_id', activeOrganization.value.id)
-      .order('name')
-    orgRoles.value = data || []
-  }
-  catch {
+  const client = useSupabase()
+  const { data, error: rolesError } = await client
+    .from('roles')
+    .select('id, name')
+    .eq('organization_id', activeOrganization.value.id)
+    .order('name')
+  if (rolesError) {
     orgRoles.value = []
+    error.value = rolesError.message || 'Failed to load roles'
+    return
   }
+  orgRoles.value = data || []
 }
 
 /**
@@ -1411,6 +1424,11 @@ async function saveDashboard() {
     error.value = 'Name is required'
     return
   }
+  if (form.visibility === 'role' && !(form.roleIds || []).length) {
+    settingsOpen.value = true
+    error.value = 'Select at least one role for role-limited visibility'
+    return
+  }
   saving.value = true
   error.value = ''
   try {
@@ -1463,6 +1481,7 @@ async function load() {
     form.roleIds = item.roleIds || []
     form.layout = normalizeDashboardLayout(item.layout)
     toolsMenuEnabled.value = form.layout.tools.enabled === true
+    if (form.visibility === 'role') settingsOpen.value = true
     widgets.value = item.widgets || []
     layoutDirty.value = false
     pendingLayout.value = []
@@ -1476,9 +1495,17 @@ async function load() {
 }
 
 watch(
+  () => form.visibility,
+  (value) => {
+    if (value === 'role') settingsOpen.value = true
+  },
+)
+
+watch(
   () => activeOrganization.value?.id,
   async () => {
-    await Promise.all([load(), loadIngestTables(), loadRoles()])
+    await loadRoles()
+    await Promise.all([load(), loadIngestTables()])
   },
   { immediate: true },
 )

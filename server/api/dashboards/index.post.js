@@ -1,4 +1,4 @@
-import { parseDashboardBody } from '~~/server/utils/dashboards.js'
+import { assertRolesInOrganization, parseDashboardBody } from '~~/server/utils/dashboards.js'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
@@ -12,8 +12,17 @@ export default defineEventHandler(async (event) => {
   if (!parsed.name) {
     throw createError({ statusCode: 400, statusMessage: 'Name is required' })
   }
+  if (parsed.visibility === 'role' && !parsed.roleIds.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Select at least one role for role-limited visibility',
+    })
+  }
 
   const admin = useSupabaseAdmin()
+  if (parsed.visibility === 'role') {
+    await assertRolesInOrganization(admin, organizationId, parsed.roleIds)
+  }
   await assertLicenceAllows(admin, {
     organizationId,
     isPlatformAdmin,
@@ -46,7 +55,10 @@ export default defineEventHandler(async (event) => {
     }))
     const { error: roleError } = await admin.from('dashboard_roles').insert(rows)
     if (roleError) {
-      console.warn('[dashboards] role link failed', roleError.message)
+      throw createError({
+        statusCode: 500,
+        statusMessage: roleError.message || 'Failed to assign dashboard roles',
+      })
     }
   }
 

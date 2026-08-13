@@ -4,11 +4,14 @@
  * Optional `roles` on items/groups: 'platform' | 'orgAdmin'
  * (omit = visible to all authenticated app users).
  *
+ * `icon` on a group is a key from `app/utils/navIcons.js` (shown in the
+ * collapsed rail and beside the group label when expanded).
+ *
  * Order note: `administration` is always rendered last by useAppNav
  * (regardless of position in this array). Prefer keeping it last here too.
  *
  * @typedef {{ id: string, label: string, to: string, roles?: Array<'platform'|'orgAdmin'> }} NavItem
- * @typedef {{ id: string, label: string, to?: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
+ * @typedef {{ id: string, label: string, icon?: string, to?: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
  */
 
 /** @type {NavGroup[]} */
@@ -16,6 +19,7 @@ export const appNavGroups = [
   {
     id: 'dashboards',
     label: 'Dashboards',
+    icon: 'dashboard',
     to: '/dashboards',
     children: [
       {
@@ -34,6 +38,7 @@ export const appNavGroups = [
   {
     id: 'reports',
     label: 'Reports',
+    icon: 'reports',
     to: '/reports',
     children: [
       {
@@ -52,22 +57,27 @@ export const appNavGroups = [
   {
     id: 'demo',
     label: 'Demo',
+    icon: 'demo',
+    roles: ['platform'],
     children: [
       {
         id: 'grid',
         label: 'Grid',
         to: '/grid',
+        roles: ['platform'],
       },
       {
         id: 'widgets',
         label: 'Widgets',
         to: '/widgets',
+        roles: ['platform'],
       },
     ],
   },
   {
     id: 'data-sources',
     label: 'Data Sources',
+    icon: 'data-sources',
     to: '/data-sources',
     roles: ['platform', 'orgAdmin'],
     children: [
@@ -94,6 +104,7 @@ export const appNavGroups = [
   {
     id: 'administration',
     label: 'Administration',
+    icon: 'administration',
     to: '/administration',
     roles: ['platform', 'orgAdmin'],
     children: [

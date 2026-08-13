@@ -135,6 +135,34 @@ export function parseDashboardBody(body) {
 }
 
 /**
+ * Ensure selected role IDs belong to the organization.
+ * @param {import('@supabase/supabase-js').SupabaseClient} admin
+ * @param {string} organizationId
+ * @param {string[]} roleIds
+ */
+export async function assertRolesInOrganization(admin, organizationId, roleIds) {
+  const ids = [...new Set((roleIds || []).map((id) => String(id)).filter(Boolean))]
+  if (!ids.length) return []
+
+  const { data, error } = await admin
+    .from('roles')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .in('id', ids)
+
+  if (error) {
+    throw createError({ statusCode: 500, statusMessage: error.message })
+  }
+  if ((data || []).length !== ids.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'One or more selected roles are not in this organization',
+    })
+  }
+  return ids
+}
+
+/**
  * @param {unknown} body
  */
 export function parseWidgetBody(body) {
@@ -170,5 +198,45 @@ export function parseWidgetBody(body) {
     sort_order,
     data_config,
     display_config,
+  }
+}
+
+/**
+ * Persist polar as donut + display_config.polarArea so saves work before the
+ * DB widget_type check includes 'polar'.
+ * @param {{ widget_type: string, display_config?: Record<string, unknown> }} parsed
+ */
+export function encodeWidgetForDb(parsed) {
+  const display = normalizeDisplayConfig(parsed.display_config || {})
+  if (parsed.widget_type === 'polar') {
+    return {
+      ...parsed,
+      widget_type: 'donut',
+      display_config: { ...display, polarArea: true },
+    }
+  }
+  return {
+    ...parsed,
+    display_config: { ...display, polarArea: false },
+  }
+}
+
+/**
+ * Surface stored polar-area widgets as widget_type polar for the client.
+ * @param {Record<string, unknown> | null | undefined} widget
+ */
+export function decodeWidgetFromDb(widget) {
+  if (!widget || typeof widget !== 'object') return widget
+  const display = normalizeDisplayConfig(widget.display_config)
+  if (display.polarArea || widget.widget_type === 'polar') {
+    return {
+      ...widget,
+      widget_type: 'polar',
+      display_config: { ...display, polarArea: true },
+    }
+  }
+  return {
+    ...widget,
+    display_config: display,
   }
 }

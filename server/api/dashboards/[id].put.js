@@ -1,4 +1,4 @@
-import { parseDashboardBody } from '~~/server/utils/dashboards.js'
+import { assertRolesInOrganization, parseDashboardBody } from '~~/server/utils/dashboards.js'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -13,8 +13,17 @@ export default defineEventHandler(async (event) => {
   if (!parsed.name) {
     throw createError({ statusCode: 400, statusMessage: 'Name is required' })
   }
+  if (parsed.visibility === 'role' && !parsed.roleIds.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Select at least one role for role-limited visibility',
+    })
+  }
 
   const admin = useSupabaseAdmin()
+  if (parsed.visibility === 'role') {
+    await assertRolesInOrganization(admin, organizationId, parsed.roleIds)
+  }
   const { data: dash, error } = await admin
     .from('dashboards')
     .update({
@@ -38,9 +47,15 @@ export default defineEventHandler(async (event) => {
 
   await admin.from('dashboard_roles').delete().eq('dashboard_id', id)
   if (parsed.visibility === 'role' && parsed.roleIds.length) {
-    await admin.from('dashboard_roles').insert(
+    const { error: roleError } = await admin.from('dashboard_roles').insert(
       parsed.roleIds.map((role_id) => ({ dashboard_id: id, role_id })),
     )
+    if (roleError) {
+      throw createError({
+        statusCode: 500,
+        statusMessage: roleError.message || 'Failed to assign dashboard roles',
+      })
+    }
   }
 
   return { item: dash }

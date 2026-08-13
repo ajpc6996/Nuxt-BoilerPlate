@@ -2,6 +2,9 @@ import { appNavGroups } from '~/config/nav.js'
 
 /**
  * App shell sidebar state (collapse / pin) + filtered nav.
+ *
+ * Pin ON  → stay expanded after navigating (manual collapse still allowed).
+ * Pin OFF → collapse to icon rail (desktop) / hide drawer (mobile) after a menu selection.
  */
 export function useAppNav() {
   const PIN_KEY = 'zorro-sidebar-pinned'
@@ -73,11 +76,13 @@ export function useAppNav() {
     const savedCollapsed = localStorage.getItem(COLLAPSED_KEY)
     if (savedPin !== null) pinned.value = savedPin === '1'
     if (savedCollapsed !== null) collapsed.value = savedCollapsed === '1'
-    // Default: expanded when pinned
+    // First visit: pinned + expanded
     if (savedPin === null && savedCollapsed === null) {
       pinned.value = true
       collapsed.value = false
     }
+    // Pin means “prefer open”; recover from a stale collapsed+pinned combo on load
+    if (pinned.value) collapsed.value = false
   }
 
   function persist() {
@@ -88,26 +93,29 @@ export function useAppNav() {
 
   function togglePinned() {
     pinned.value = !pinned.value
-    if (pinned.value) collapsed.value = false
+    if (pinned.value) {
+      collapsed.value = false
+    }
     persist()
   }
 
   function toggleCollapsed() {
-    if (pinned.value && !collapsed.value) {
-      // Unpinning via collapse when pinned: just collapse temporarily
-      collapsed.value = true
-    } else {
-      collapsed.value = !collapsed.value
-    }
-    if (!collapsed.value) {
-      // expanding implies useful to keep open
-    }
+    collapsed.value = !collapsed.value
     persist()
   }
 
   function setCollapsed(value) {
     collapsed.value = Boolean(value)
     persist()
+  }
+
+  /**
+   * After choosing a nav destination: keep open if pinned, otherwise collapse.
+   */
+  function collapseAfterNavigate() {
+    if (!pinned.value) {
+      setCollapsed(true)
+    }
   }
 
   function isGroupOpen(groupId) {
@@ -136,6 +144,20 @@ export function useAppNav() {
     await navigateTo(group.to)
   }
 
+  /**
+   * From the collapsed rail: expand the sidebar and open only this group.
+   * @param {{ id: string }} group
+   */
+  function expandGroupFromRail(group) {
+    if (!group?.id) return
+    const next = {}
+    for (const g of groups.value) {
+      next[g.id] = g.id === group.id
+    }
+    openGroups.value = next
+    setCollapsed(false)
+  }
+
   return {
     pinned,
     collapsed,
@@ -146,9 +168,11 @@ export function useAppNav() {
     togglePinned,
     toggleCollapsed,
     setCollapsed,
+    collapseAfterNavigate,
     isGroupOpen,
     toggleGroup,
     setGroupOpen,
     openGroupHub,
+    expandGroupFromRail,
   }
 }

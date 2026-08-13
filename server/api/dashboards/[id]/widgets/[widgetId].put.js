@@ -1,4 +1,4 @@
-import { parseWidgetBody } from '~~/server/utils/dashboards.js'
+import { decodeWidgetFromDb, encodeWidgetForDb, parseWidgetBody } from '~~/server/utils/dashboards.js'
 import { DASHBOARD_WIDGET_TYPES } from '~~/shared/dashboard.js'
 
 export default defineEventHandler(async (event) => {
@@ -17,10 +17,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const admin = useSupabaseAdmin()
+  const row = encodeWidgetForDb(parsed)
   const { data: widget, error } = await admin
     .from('dashboard_widgets')
     .update({
-      ...parsed,
+      ...row,
       updated_at: new Date().toISOString(),
     })
     .eq('id', widgetId)
@@ -35,5 +36,5 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Widget not found' })
   }
 
-  return { item: widget }
+  return { item: decodeWidgetFromDb(widget) }
 })

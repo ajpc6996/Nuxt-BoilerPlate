@@ -97,6 +97,11 @@ export function normalizeDisplayConfig(raw) {
     showLegend: cfg.showLegend !== false,
     showSeriesIndicators: cfg.showSeriesIndicators !== false,
     showWidgetType: Boolean(cfg.showWidgetType),
+    /**
+     * Polar area is stored as widget_type=donut + polarArea until/unless the
+     * DB check constraint includes 'polar'. App surfaces it as type polar.
+     */
+    polarArea: Boolean(cfg.polarArea),
     /** Per-widget chart toolbar (vue-data-ui user options). Opt-in. */
     showTools: cfg.showTools === true
       || cfg.showTools === 'true'

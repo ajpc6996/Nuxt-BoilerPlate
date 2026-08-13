@@ -16,8 +16,11 @@
       </div>
       <button
         type="button"
-        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--border)] text-[var(--mute)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
-        :title="pinned ? 'Unpin menu' : 'Pin menu open'"
+        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border transition-colors"
+        :class="pinned
+          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+          : 'border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]'"
+        :title="pinned ? 'Unpin menu (auto-collapse after navigation)' : 'Pin menu open'"
         :aria-pressed="pinned"
         @click="togglePinned"
       >
@@ -49,73 +52,104 @@
       </button>
     </div>
 
-    <nav class="flex-1 overflow-y-auto px-2 py-3" aria-label="Application">
-      <div
-        v-for="group in filteredGroups"
-        :key="group.id"
-        class="mb-3"
-      >
-        <div
-          v-if="!railCollapsed"
-          class="flex w-full items-center gap-0.5"
-        >
-          <button
-            type="button"
-            class="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--mute-soft)] hover:text-[var(--accent-ink)]"
-            :title="group.to ? `Open ${group.label}` : group.label"
-            @click="onGroupLabelClick(group)"
-            @dblclick.prevent="onGroupToggle(group)"
+    <nav
+      class="flex-1 px-2 py-3"
+      :class="railCollapsed ? 'overflow-visible' : 'overflow-y-auto'"
+      aria-label="Application"
+    >
+      <!-- Collapsed: group icons only -->
+      <template v-if="railCollapsed">
+        <ul class="flex flex-col items-center gap-1">
+          <li
+            v-for="group in filteredGroups"
+            :key="group.id"
+            class="w-full"
           >
-            <span class="truncate">{{ group.label }}</span>
-          </button>
-          <button
-            type="button"
-            class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--mute-soft)] hover:bg-[var(--accent-soft)]/50 hover:text-[var(--accent-ink)]"
-            :title="isGroupOpen(group.id) ? 'Collapse' : 'Expand'"
-            :aria-expanded="isGroupOpen(group.id)"
-            @click.stop="onGroupToggle(group)"
-          >
-            <svg
-              class="h-3.5 w-3.5 transition-transform"
-              :class="isGroupOpen(group.id) ? 'rotate-90' : ''"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
+            <button
+              type="button"
+              class="group/rail relative mx-auto flex h-10 w-10 items-center justify-center rounded-md text-[var(--mute)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent-ink)]"
+              :class="isGroupActive(group)
+                ? 'bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+                : ''"
+              :aria-label="group.label"
+              @click="onCollapsedGroupClick(group)"
             >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-        <p
-          v-else
-          class="px-1 pb-1 text-center text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--mute-soft)]"
-          :title="group.label"
-        >
-          {{ group.label.slice(0, 1) }}
-        </p>
-
-        <ul v-show="railCollapsed || isGroupOpen(group.id)" class="mt-1 space-y-0.5">
-          <li v-for="item in group.children" :key="item.id">
-            <NuxtLink
-              :to="item.to"
-              class="flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors"
-              :class="isActive(item.to)
-                ? 'bg-[var(--accent-soft)] font-medium text-[var(--accent-ink)]'
-                : 'text-[var(--ink)] hover:bg-[var(--accent-soft)]/60 hover:text-[var(--accent-ink)]'"
-              :title="item.label"
-              @click="onNavigate"
-            >
+              <AppNavIcon :name="group.icon || 'folder'" />
               <span
-                class="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--surface-white)] text-[0.65rem] font-semibold text-[var(--mute)]"
+                class="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--surface-white)] px-2 py-1 text-xs font-medium text-[var(--ink)] opacity-0 shadow-md transition-opacity duration-75 group-hover/rail:opacity-100"
+                role="tooltip"
               >
-                {{ item.label.slice(0, 1) }}
+                {{ group.label }}
               </span>
-              <span v-if="!railCollapsed" class="truncate">{{ item.label }}</span>
-            </NuxtLink>
+            </button>
           </li>
         </ul>
-      </div>
+      </template>
+
+      <!-- Expanded: groups + children -->
+      <template v-else>
+        <div
+          v-for="group in filteredGroups"
+          :key="group.id"
+          class="mb-3"
+        >
+          <div class="flex w-full items-center gap-0.5">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--mute-soft)] hover:text-[var(--accent-ink)]"
+              :title="group.to ? `Open ${group.label}` : group.label"
+              @click="onGroupLabelClick(group)"
+              @dblclick.prevent="onGroupToggle(group)"
+            >
+              <AppNavIcon
+                :name="group.icon || 'folder'"
+                size-class="h-4 w-4"
+              />
+              <span class="truncate">{{ group.label }}</span>
+            </button>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--mute-soft)] hover:bg-[var(--accent-soft)]/50 hover:text-[var(--accent-ink)]"
+              :title="isGroupOpen(group.id) ? 'Collapse' : 'Expand'"
+              :aria-expanded="isGroupOpen(group.id)"
+              @click.stop="onGroupToggle(group)"
+            >
+              <svg
+                class="h-3.5 w-3.5 transition-transform"
+                :class="isGroupOpen(group.id) ? 'rotate-90' : ''"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+
+          <ul
+            v-show="isGroupOpen(group.id)"
+            class="mt-1 space-y-0.5"
+          >
+            <li
+              v-for="item in group.children"
+              :key="item.id"
+            >
+              <NuxtLink
+                :to="item.to"
+                class="flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors"
+                :class="isActive(item.to)
+                  ? 'bg-[var(--accent-soft)] font-medium text-[var(--accent-ink)]'
+                  : 'text-[var(--ink)] hover:bg-[var(--accent-soft)]/60 hover:text-[var(--accent-ink)]'"
+                :title="item.label"
+                @click="onNavigate"
+              >
+                <span class="truncate pl-6">{{ item.label }}</span>
+              </NuxtLink>
+            </li>
+          </ul>
+        </div>
+      </template>
 
       <p
         v-if="!filteredGroups.length"
@@ -139,7 +173,8 @@ const {
   isGroupOpen,
   toggleGroup,
   openGroupHub,
-  setCollapsed,
+  collapseAfterNavigate,
+  expandGroupFromRail,
 } = useAppNav()
 
 /** Collapsed narrow rail vs full labels */
@@ -168,11 +203,28 @@ const isActive = (to) => {
   return !hasMoreSpecific
 }
 
+/**
+ * Whether any child (or group hub) matches the current route.
+ * @param {{ to?: string, children?: Array<{ to: string }> }} group
+ */
+function isGroupActive(group) {
+  const targets = [
+    group.to,
+    ...(group.children || []).map((c) => c.to),
+  ].filter(Boolean)
+  return targets.some((to) => isActive(to) || route.path === to || route.path.startsWith(`${to}/`))
+}
+
 const onNavigate = () => {
-  // On small screens, collapse after navigation unless pinned
-  if (import.meta.client && window.innerWidth < 1024 && !pinned.value) {
-    setCollapsed(true)
-  }
+  collapseAfterNavigate()
+}
+
+/**
+ * Collapsed rail: expand sidebar and open this group.
+ * @param {{ id: string, label?: string }} group
+ */
+function onCollapsedGroupClick(group) {
+  expandGroupFromRail(group)
 }
 
 /**
@@ -187,6 +239,7 @@ function onGroupLabelClick(group) {
   }
   labelClickTimer = setTimeout(async () => {
     labelClickTimer = null
+    if (!group?.to) return
     await openGroupHub(group)
     onNavigate()
   }, 250)

@@ -178,7 +178,7 @@
           Back
         </NuxtLink>
         <NuxtLink
-          v-if="canConfigure && !isStandalone && !isFullscreen"
+          v-if="canEditDashboard && !isStandalone && !isFullscreen"
           :to="`/dashboards/configure/${route.params.id}`"
           class="dashboard-view__export-hide btn-primary !px-3 !py-1.5 text-sm"
         >
@@ -226,7 +226,7 @@
               :dashboard-id="dash.id"
               :filters="filterPayload"
               :locked="locked"
-              :can-configure="canConfigure"
+              :can-configure="canEditDashboard"
               :refresh-nonce="refreshNonce"
               @filter="onWidgetFilter"
               @type-change="onTypeChange"
@@ -241,7 +241,7 @@
         >
           This dashboard has no widgets yet.
           <NuxtLink
-            v-if="canConfigure && !isStandalone"
+            v-if="canEditDashboard && !isStandalone"
             :to="`/dashboards/configure/${dash.id}`"
             class="text-[var(--accent-ink)] underline"
           >
@@ -295,7 +295,7 @@ const {
   activeOrganizationId,
   loading: orgLoading,
 } = useOrganization()
-const { allowsRoles } = usePermissions()
+const { canOpenAdministration } = usePermissions()
 const authedFetch = useAuthedFetch()
 const {
   filterPayload,
@@ -350,7 +350,9 @@ const organizationId = computed(() =>
   activeOrganizationId.value || activeOrganization.value?.id || '',
 )
 
-const canConfigure = computed(() => allowsRoles(['platform', 'orgAdmin']))
+/** Org Admin or Platform Admin only — not regular members. */
+const canEditDashboard = computed(() => canOpenAdministration.value)
+
 const widgets = computed(() => dash.value?.widgets || [])
 const cols = computed(() => dash.value?.layout?.cols || 12)
 const dashDescription = computed(() => String(dash.value?.description || '').trim())

@@ -10,6 +10,7 @@ export const DASHBOARD_WIDGET_TYPES = [
   'line',
   'pie',
   'donut',
+  'polar',
   'gauge',
   'table',
 ]
@@ -28,6 +29,7 @@ export function defaultWidgetGrid(type) {
     gauge: { grid_w: 4, grid_h: 4 },
     pie: { grid_w: 4, grid_h: 4 },
     donut: { grid_w: 4, grid_h: 4 },
+    polar: { grid_w: 4, grid_h: 4 },
     bar: { grid_w: 6, grid_h: 4 },
     line: { grid_w: 6, grid_h: 4 },
     table: { grid_w: 6, grid_h: 4 },
@@ -45,6 +47,7 @@ export function widgetMeta(type) {
     line: { label: 'Line chart', needs: { dimensions: 1, metrics: 1, series: true } },
     pie: { label: 'Pie chart', needs: { dimensions: 1, metrics: 1, series: false } },
     donut: { label: 'Donut chart', needs: { dimensions: 1, metrics: 1, series: false } },
+    polar: { label: 'Polar area', needs: { dimensions: 1, metrics: 1, series: false } },
     gauge: { label: 'Gauge', needs: { dimensions: 0, metrics: 1, series: false } },
     table: { label: 'Table', needs: { dimensions: 0, metrics: 1, series: true } },
   }
@@ -65,7 +68,7 @@ export function suggestedDisplayTypes(shape) {
     out.push('kpi', 'gauge')
   }
   if (metrics === 1 && dims >= 1 && !series) {
-    out.push('bar', 'pie', 'donut', 'line')
+    out.push('bar', 'pie', 'donut', 'polar', 'line')
   }
   // Multi-metric or series split → charts that support multiple series
   if (metrics > 1 || series) {
@@ -321,8 +324,8 @@ export function mapRowsToWidgetDataset(widgetType, rows, dataConfig, displayConf
     }
   }
 
-  if (widgetType === 'pie' || widgetType === 'donut') {
-    // Pie/donut use the first metric only (multi-series not applicable).
+  if (widgetType === 'pie' || widgetType === 'donut' || widgetType === 'polar') {
+    // Pie/donut/polar use the first metric only (multi-series not applicable).
     return list.map((row) => ({
       name: String(dim0 ? row[dim0] : row.series_key || 'Item'),
       values: [Number(row[metricAs]) || 0],

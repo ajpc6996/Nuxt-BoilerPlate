@@ -34,9 +34,18 @@ const isMobile = ref(false)
 const mobileOpen = computed(() => isMobile.value && !collapsed.value)
 
 const syncViewport = () => {
-  isMobile.value = window.innerWidth < 1024
-  // Desktop default stays pinned/expanded from localStorage
-  if (!isMobile.value && pinned.value) {
+  const nowMobile = window.innerWidth < 1024
+  const wasMobile = isMobile.value
+  isMobile.value = nowMobile
+
+  // Crossing to mobile: close the drawer
+  if (nowMobile && !wasMobile) {
+    setCollapsed(true)
+    return
+  }
+
+  // Crossing to desktop: restore open only when pinned
+  if (!nowMobile && wasMobile && pinned.value) {
     setCollapsed(false)
   }
 }
@@ -47,10 +56,12 @@ const closeMobile = () => {
 
 onMounted(() => {
   initSidebar()
-  syncViewport()
-  // Mobile starts collapsed (drawer closed) unless already expanded
-  if (window.innerWidth < 1024) {
+  isMobile.value = window.innerWidth < 1024
+  if (isMobile.value) {
     setCollapsed(true)
+  }
+  else if (pinned.value) {
+    setCollapsed(false)
   }
   window.addEventListener('resize', syncViewport)
   onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))

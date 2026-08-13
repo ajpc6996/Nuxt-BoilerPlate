@@ -15,13 +15,6 @@
         v-model="listFilter"
         placeholder="Filter dashboards…"
       />
-      <NuxtLink
-        v-if="canConfigure"
-        to="/dashboards/configure"
-        class="btn-secondary !px-4 !py-2"
-      >
-        Configure
-      </NuxtLink>
     </AppListToolbar>
 
     <p
@@ -77,15 +70,12 @@ definePageMeta({
 useHead({ title: 'Dashboards' })
 
 const { activeOrganization } = useOrganization()
-const { allowsRoles } = usePermissions()
 const authedFetch = useAuthedFetch()
 
 const items = ref([])
 const listFilter = ref('')
 const pending = ref(false)
 const error = ref('')
-
-const canConfigure = computed(() => allowsRoles(['platform', 'orgAdmin']))
 
 const filtered = computed(() => {
   const q = listFilter.value.trim().toLowerCase()

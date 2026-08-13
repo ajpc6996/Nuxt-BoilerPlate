@@ -13,7 +13,7 @@
             target="_blank"
             rel="noreferrer"
           >vue-data-ui</a>
-          — KPI cards, donut, pie, gauge, bar drill-down, and line chart.
+          — KPI cards, donut, pie, polar area, gauge, bar drill-down, and line chart.
         </p>
       </div>
       <button
@@ -67,6 +67,15 @@
         @select="onPieSelect"
       />
 
+      <WidgetPolar
+        title="Share by channel"
+        subtitle="Polar area · relative magnitude by channel"
+        :dataset="polarDataset"
+        @select="onPolarSelect"
+      />
+    </div>
+
+    <div class="mt-6 grid gap-6 lg:grid-cols-2">
       <WidgetBar
         title="Revenue by region"
         subtitle="Click a region to drill into countries"
@@ -95,6 +104,7 @@ import WidgetInfoCard from '~/components/WidgetInfoCard.client.vue'
 import WidgetDonut from '~/components/WidgetDonut.client.vue'
 import WidgetGauge from '~/components/WidgetGauge.client.vue'
 import WidgetPie from '~/components/WidgetPie.client.vue'
+import WidgetPolar from '~/components/WidgetPolar.client.vue'
 import WidgetBar from '~/components/WidgetBar.client.vue'
 import WidgetLine from '~/components/WidgetLine.client.vue'
 
@@ -175,6 +185,14 @@ const pieDataset = [
   { name: 'Major', values: [41], color: '#ea580c' },
   { name: 'Minor', values: [52], color: '#ca8a04' },
   { name: 'None', values: [26], color: '#16a34a' },
+]
+
+const polarDataset = [
+  { name: 'Organic', values: [820], color: chartPalette[0] },
+  { name: 'Paid', values: [540], color: chartPalette[1] },
+  { name: 'Referral', values: [310], color: chartPalette[2] },
+  { name: 'Partner', values: [190], color: chartPalette[3] },
+  { name: 'Direct', values: [420], color: chartPalette[4] },
 ]
 
 const gaugeDataset = {
@@ -302,6 +320,17 @@ function onPieSelect(payload) {
     return
   }
   focusDetail.value = `Priority “${name}” · ${payload.datapoint.value ?? '—'} tickets`
+}
+
+/**
+ * @param {{ datapoint?: { name?: string, value?: number } }} payload
+ */
+function onPolarSelect(payload) {
+  const name = payload?.datapoint?.name
+  if (!name) {
+    return
+  }
+  focusDetail.value = `Polar channel “${name}” · ${payload.datapoint.value ?? '—'} sessions`
 }
 
 /**

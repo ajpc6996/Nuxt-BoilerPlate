@@ -115,7 +115,7 @@
       class="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--modal-scrim)] p-4"
       @click.self="wizardOpen = false"
     >
-      <div class="panel w-full max-w-md px-6 py-5">
+      <div class="panel w-full max-w-lg px-6 py-5">
         <h2 class="font-display text-xl font-semibold text-[var(--ink)]">
           New dashboard
         </h2>
@@ -138,6 +138,30 @@
               <option value="role">Limited to roles</option>
               <option value="public">Public (all org members)</option>
             </select>
+          </div>
+          <div
+            v-if="wizard.visibility === 'role'"
+            class="flex flex-col gap-1"
+          >
+            <label class="text-xs font-medium text-[var(--mute)]">Roles that can view</label>
+            <MultiSelect
+              v-model="wizard.roleIds"
+              class="w-full"
+              display="chip"
+              filter
+              show-clear
+              append-to="body"
+              :options="orgRoles"
+              option-label="name"
+              option-value="id"
+              placeholder="Select roles…"
+            />
+            <p
+              v-if="!orgRoles.length"
+              class="text-xs text-[var(--danger)]"
+            >
+              No roles found. Create roles under Administration → Roles first.
+            </p>
           </div>
           <p
             v-if="wizardError"
@@ -169,6 +193,8 @@
 </template>
 
 <script setup>
+import MultiSelect from 'openvue/multiselect'
+
 definePageMeta({
   layout: 'app',
   middleware: ['auth', 'admin'],
@@ -180,8 +206,10 @@ const { activeOrganization } = useOrganization()
 const authedFetch = useAuthedFetch()
 const { confirm: appConfirm } = useAppConfirm()
 const router = useRouter()
+const supabase = useSupabase()
 
 const items = ref([])
+const orgRoles = ref([])
 const listFilter = ref('')
 const pending = ref(false)
 const error = ref('')
@@ -192,6 +220,7 @@ const creating = ref(false)
 const wizard = reactive({
   name: '',
   visibility: 'private',
+  roleIds: [],
 })
 
 const filtered = computed(() => {
@@ -215,6 +244,7 @@ function formatDate(value) {
 function openCreate() {
   wizard.name = ''
   wizard.visibility = 'private'
+  wizard.roleIds = []
   wizardError.value = ''
   wizardOpen.value = true
 }
@@ -225,6 +255,10 @@ async function createDashboard() {
     wizardError.value = 'Name is required'
     return
   }
+  if (wizard.visibility === 'role' && !(wizard.roleIds || []).length) {
+    wizardError.value = 'Select at least one role for role-limited visibility'
+    return
+  }
   creating.value = true
   try {
     const res = await authedFetch('/api/dashboards', {
@@ -233,6 +267,7 @@ async function createDashboard() {
         organizationId: activeOrganization.value.id,
         name: wizard.name.trim(),
         visibility: wizard.visibility,
+        roleIds: wizard.roleIds || [],
       },
     })
     wizardOpen.value = false
@@ -268,9 +303,27 @@ async function remove(row) {
   }
 }
 
+async function loadRoles() {
+  if (!activeOrganization.value?.id) {
+    orgRoles.value = []
+    return
+  }
+  const { data, error: rolesError } = await supabase
+    .from('roles')
+    .select('id, name')
+    .eq('organization_id', activeOrganization.value.id)
+    .order('name')
+  if (rolesError) {
+    orgRoles.value = []
+    return
+  }
+  orgRoles.value = data || []
+}
+
 async function load() {
   if (!activeOrganization.value?.id) {
     items.value = []
+    orgRoles.value = []
     return
   }
   pending.value = true
@@ -280,6 +333,7 @@ async function load() {
       query: { organizationId: activeOrganization.value.id },
     })
     items.value = res.items || []
+    await loadRoles()
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load'

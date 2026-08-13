@@ -1,4 +1,4 @@
-import { assertCanViewDashboard } from '~~/server/utils/dashboards.js'
+import { assertCanViewDashboard, decodeWidgetFromDb } from '~~/server/utils/dashboards.js'
 import {
   mapRowsToWidgetDataset,
   normalizeDataConfig,
@@ -37,9 +37,10 @@ export default defineEventHandler(async (event) => {
     if (!widget) {
       throw createError({ statusCode: 404, statusMessage: 'Widget not found' })
     }
-    widgetType = widget.widget_type
-    displayConfig = widget.display_config || {}
-    dataConfig = normalizeDataConfig(widget.data_config)
+    const decoded = decodeWidgetFromDb(widget)
+    widgetType = decoded.widget_type
+    displayConfig = decoded.display_config || {}
+    dataConfig = normalizeDataConfig(decoded.data_config)
   }
   else if (body?.dashboardId) {
     // Preview while configuring — require admin
@@ -118,7 +119,7 @@ export default defineEventHandler(async (event) => {
   const shape = {
     dimensionCount: runConfig.dimensions.length,
     metricCount: runConfig.metrics.length,
-    hasSeries: Boolean(runConfig.seriesField),
+    hasSeries: Boolean(runConfig.seriesField) || runConfig.metrics.length > 1,
   }
 
   const dataset = mapRowsToWidgetDataset(displayType, rows, runConfig, displayConfig)

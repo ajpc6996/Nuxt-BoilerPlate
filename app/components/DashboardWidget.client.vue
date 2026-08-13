@@ -193,6 +193,19 @@
           fill
           @select="onPieSelect"
         />
+        <WidgetPolar
+          v-else-if="effectiveType === 'polar'"
+          class="h-full min-h-0"
+          bare
+          :title="''"
+          :subtitle="widget.subtitle || ''"
+          :dataset="dataset"
+          :show-legend="displayConfig.showLegend"
+          :show-series-indicators="displayConfig.showSeriesIndicators"
+          :show-tools="chartToolsEnabled"
+          fill
+          @select="onPieSelect"
+        />
         <div
           v-else
           class="h-full max-h-full overflow-auto"
@@ -235,6 +248,7 @@
 <script setup>
 import WidgetInfoCard from '~/components/WidgetInfoCard.client.vue'
 import WidgetDonut from '~/components/WidgetDonut.client.vue'
+import WidgetPolar from '~/components/WidgetPolar.client.vue'
 import WidgetGauge from '~/components/WidgetGauge.client.vue'
 import WidgetPie from '~/components/WidgetPie.client.vue'
 import WidgetBar from '~/components/WidgetBar.client.vue'
@@ -282,14 +296,15 @@ const chartToolsEnabled = computed(() => displayConfig.value.showTools === true)
 const availableTypes = computed(() => {
   const fromShape = displayTypesForConfig(dataConfig.value)
   const fromApi = suggestedFromApi.value || []
-  const merged = [...new Set([...(fromApi.length ? fromApi : fromShape), selectedType.value])]
-  return merged
+  // Always union shape + API so newer types (e.g. polar) are never dropped
+  // when the query response was shaped before they existed.
+  return [...new Set([...fromShape, ...fromApi, selectedType.value].filter(Boolean))]
 })
 
 const effectiveType = computed(() => selectedType.value || props.widget.widget_type || 'table')
 
 const supportsLegendControls = computed(() =>
-  ['line', 'bar', 'pie', 'donut'].includes(effectiveType.value),
+  ['line', 'bar', 'pie', 'donut', 'polar'].includes(effectiveType.value),
 )
 
 /** Line/bar series markers (dots / bar value labels). */
@@ -297,16 +312,21 @@ const supportsMarkerControls = computed(() =>
   ['line', 'bar'].includes(effectiveType.value),
 )
 
-/** Pie/donut slice name/percentage labels. */
+/** Pie/donut/polar slice name/percentage labels. */
 const supportsLabelControls = computed(() =>
-  ['pie', 'donut'].includes(effectiveType.value),
+  ['pie', 'donut', 'polar'].includes(effectiveType.value),
 )
 
-/** Type dropdown while configuring, or when display_config asks to show type. */
+/**
+ * Type dropdown: always while configuring (when >1 type).
+ * In view mode: when showWidgetType is on, or when Polar is a valid swap
+ * for this widget's data shape (so Polar is always reachable in view).
+ */
 const showTypeSelect = computed(() => {
   if (availableTypes.value.length <= 1) return false
   if (!props.locked && props.canConfigure) return true
-  return displayConfig.value.showWidgetType
+  if (displayConfig.value.showWidgetType) return true
+  return availableTypes.value.includes('polar')
 })
 
 /** Static type label on view when showWidgetType but only one type (no select). */

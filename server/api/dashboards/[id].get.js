@@ -1,4 +1,4 @@
-import { assertCanViewDashboard } from '~~/server/utils/dashboards.js'
+import { assertCanViewDashboard, decodeWidgetFromDb } from '~~/server/utils/dashboards.js'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -21,6 +21,7 @@ export default defineEventHandler(async (event) => {
   const widgets = (dash.dashboard_widgets || [])
     .slice()
     .sort((a, b) => (a.sort_order - b.sort_order) || (a.grid_y - b.grid_y) || (a.grid_x - b.grid_x))
+    .map((w) => decodeWidgetFromDb(w))
 
   return {
     item: {

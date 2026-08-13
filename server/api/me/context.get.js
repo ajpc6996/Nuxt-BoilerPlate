@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
 
   // Try as the signed-in user first (works once SELECT RLS is fixed).
   try {
-    return await loadContext(userClient, user.id, false)
+    return await loadContext(userClient, user.id)
   }
   catch (userErr) {
     console.warn(
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const admin = useSupabaseAdmin()
-    return await loadContext(admin, user.id, true)
+    return await loadContext(admin, user.id)
   }
   catch (adminErr) {
     throw createError({
@@ -50,9 +50,8 @@ export default defineEventHandler(async (event) => {
 /**
  * @param {import('@supabase/supabase-js').SupabaseClient} client
  * @param {string} userId
- * @param {boolean} asAdmin
  */
-async function loadContext(client, userId, asAdmin) {
+async function loadContext(client, userId) {
   const { data: profile, error: profileError } = await client
     .from('profiles')
     .select('id, email, is_platform_admin')
@@ -76,7 +75,9 @@ async function loadContext(client, userId, asAdmin) {
 
   let items = memberships || []
 
-  if (!items.length && (profile?.is_platform_admin || asAdmin)) {
+  // Platform admins can act in every tenant. Always list all orgs, keeping
+  // real memberships where they exist and synthesizing the rest.
+  if (profile?.is_platform_admin) {
     const { data: orgs, error: orgError } = await client
       .from('organizations')
       .select('id, name, slug, mfa_mode')
@@ -86,14 +87,27 @@ async function loadContext(client, userId, asAdmin) {
       throw createError({ statusCode: 500, statusMessage: orgError.message })
     }
 
-    if (profile?.is_platform_admin) {
-      items = (orgs || []).map((org) => ({
+    const byId = new Map(
+      items
+        .filter((m) => m.organization_id)
+        .map((m) => [m.organization_id, m]),
+    )
+
+    items = (orgs || []).map((org) => {
+      const existing = byId.get(org.id)
+      if (existing) {
+        return {
+          ...existing,
+          organizations: existing.organizations || org,
+        }
+      }
+      return {
         id: `platform-${org.id}`,
         organization_id: org.id,
         status: 'active',
         organizations: org,
-      }))
-    }
+      }
+    })
   }
 
   const { data: roleRows, error: roleError } = await client

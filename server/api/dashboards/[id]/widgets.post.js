@@ -1,4 +1,4 @@
-import { parseWidgetBody } from '~~/server/utils/dashboards.js'
+import { decodeWidgetFromDb, encodeWidgetForDb, parseWidgetBody } from '~~/server/utils/dashboards.js'
 import { DASHBOARD_WIDGET_TYPES } from '~~/shared/dashboard.js'
 
 export default defineEventHandler(async (event) => {
@@ -27,11 +27,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Dashboard not found' })
   }
 
+  const row = encodeWidgetForDb(parsed)
   const { data: widget, error } = await admin
     .from('dashboard_widgets')
     .insert({
       dashboard_id: dashboardId,
-      ...parsed,
+      ...row,
     })
     .select('*')
     .single()
@@ -40,5 +41,5 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 500, statusMessage: error?.message || 'Create widget failed' })
   }
 
-  return { item: widget }
+  return { item: decodeWidgetFromDb(widget) }
 })
