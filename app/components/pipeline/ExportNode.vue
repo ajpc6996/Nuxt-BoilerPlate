@@ -1,9 +1,9 @@
 <template>
   <PipelineNodeShell
-    label="Ingest"
-    title="Write table"
+    label="Export"
+    title="Temp Stage"
     :subtitle="subtitle"
-    tone="ingest"
+    tone="export"
     :show-target="true"
     :show-source="false"
   />
@@ -15,9 +15,7 @@ const props = defineProps({
 })
 
 const subtitle = computed(() => {
-  const t = props.data?.destinationTable
-  const table = t ? `ingest.${t}` : 'Destination table'
-  const mode = props.data?.writeMode === 'append' ? 'append' : 'replace'
-  return `${table} · ${mode}`
+  if (props.data?.connectionId) return 'Outbound destination'
+  return 'Pick outbound connection'
 })
 </script>

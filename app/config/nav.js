@@ -95,7 +95,7 @@ export const appNavGroups = [
       },
       {
         id: 'sources',
-        label: 'Sources',
+        label: 'Data Flows',
         to: '/data-sources/sources',
         roles: ['platform', 'orgAdmin'],
       },
@@ -112,6 +112,12 @@ export const appNavGroups = [
         id: 'platform-orgs',
         label: 'Organizations',
         to: '/platform/organizations',
+        roles: ['platform'],
+      },
+      {
+        id: 'admin-system-settings',
+        label: 'System Settings',
+        to: '/administration/system-settings',
         roles: ['platform'],
       },
       {

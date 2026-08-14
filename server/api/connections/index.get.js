@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
   const admin = useSupabaseAdmin()
   const { data, error } = await admin
     .from('connections')
-    .select('id, name, status, config, last_error, created_at, updated_at, connector_type_id, connector_types(id, key, name, category, auth_mode, connection_schema, credential_schema)')
+    .select('id, name, status, config, direction, last_error, created_at, updated_at, connector_type_id, connector_types(id, key, name, category, auth_mode, connection_schema, credential_schema)')
     .eq('organization_id', organizationId)
     .order('name')
 

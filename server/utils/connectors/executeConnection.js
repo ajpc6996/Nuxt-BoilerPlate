@@ -3,6 +3,12 @@ import { getConnectorRunner } from './registry.js'
 import { normalizePipeline, isMergePipeline } from './pipeline/defaults.js'
 import { executePipeline } from './pipeline/runPipeline.js'
 import { loadFetchInputs } from './pipeline/loadFetchInputs.js'
+import { loadSystemSettings, chunkRowsForStage } from '../systemSettings.js'
+import {
+  DEFAULT_INGEST_RETENTION_DAYS,
+  normalizeRetentionDays,
+} from '~~/shared/systemSettings.js'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 /**
  * Merge connection (shared) + data-source (endpoint) config.
@@ -171,63 +177,203 @@ export async function executeDataSource(opts) {
     }
 
     const rows = pipelineResult.rows
-    const sample = rows.slice(0, mode === 'test' ? 5 : rows.length)
+    const sample = rows.slice(0, mode === 'test' ? 5 : Math.min(3, rows.length))
     let rowsWritten = 0
+    let stagedWritten = 0
+    let stagedReleased = 0
+    let expiredCleaned = 0
 
     if (mode === 'run') {
-      if (!opts.isPlatformAdmin) {
+      const settings = await loadSystemSettings(admin)
+      const { error: staleError } = await admin.rpc('staged_cleanup_stale', {
+        p_ttl_minutes: settings.stageStaleTtlMinutes,
+      })
+      if (staleError) {
+        console.warn('[staged] cleanup skipped', staleError.message)
+      }
+
+      const ingestNodes = pipeline.nodes.filter((n) => n.type === 'ingest')
+      const exportNodes = pipeline.nodes.filter((n) => n.type === 'export')
+      const hasIngest = ingestNodes.length > 0
+      const hasExport = exportNodes.length > 0
+      const ingestCfg = ingestNodes[0]?.data || {}
+      const ingestMode = hasExport
+        ? 'append'
+        : (ingestCfg.writeMode === 'append' ? 'append' : 'replace')
+      const retentionDays = normalizeRetentionDays(
+        ingestCfg.retentionDays,
+        DEFAULT_INGEST_RETENTION_DAYS,
+      )
+      const cycleTime = new Date().toISOString()
+      const caps = {
+        maxRows: settings.maxStageRowsPerBatch,
+        maxBytes: settings.maxStageBytesPerBatch,
+      }
+
+      const ingestRows = hasIngest
+        ? (pipelineResult.sinkOutputs?.ingest?.[0]?.rows || rows)
+        : []
+      const exportRows = hasExport
+        ? (pipelineResult.sinkOutputs?.export?.[0]?.rows || rows)
+        : []
+
+      if (hasIngest && normalizeConnectionDirection(connection.direction) !== 'inbound') {
+        throw createError({
+          statusCode: 400,
+          statusMessage: 'Ingest requires an inbound connection on this data flow',
+        })
+      }
+
+      let exportConnectionId = connection.id
+      if (hasExport) {
+        const exportConnId = String(exportNodes[0]?.data?.connectionId || '').trim()
+        if (!exportConnId) {
+          throw createError({
+            statusCode: 400,
+            statusMessage: 'Export requires an outbound connection',
+          })
+        }
+        const { data: exportConn, error: exportConnError } = await admin
+          .from('connections')
+          .select('id, direction, organization_id')
+          .eq('id', exportConnId)
+          .maybeSingle()
+        if (
+          exportConnError
+          || !exportConn
+          || exportConn.organization_id !== dataSource.organization_id
+        ) {
+          throw createError({
+            statusCode: 400,
+            statusMessage: 'Unknown outbound connection',
+          })
+        }
+        if (normalizeConnectionDirection(exportConn.direction) !== 'outbound') {
+          throw createError({
+            statusCode: 400,
+            statusMessage: 'Export must use an outbound connection',
+          })
+        }
+        exportConnectionId = exportConn.id
+      }
+
+      if (hasIngest && !opts.isPlatformAdmin) {
         await assertLicenceAllows(admin, {
           organizationId: dataSource.organization_id,
           isPlatformAdmin: false,
           limitKey: 'maxIngestRowsPerMonth',
-          delta: sample.length,
+          delta: ingestRows.length,
         })
       }
 
-      const { data: written, error: ingestError } = await admin.rpc(
-        'ingest_replace_rows',
-        {
-          p_table: dataSource.destination_table,
-          p_organization_id: dataSource.organization_id,
-          p_connection_id: connection.id,
-          p_run_id: run.id,
-          p_rows: sample,
-        },
-      )
-
-      if (ingestError) {
-        throw createError({
-          statusCode: 500,
-          statusMessage: ingestError.message,
-        })
-      }
-
-      rowsWritten = Number(written) || 0
-
-      await admin
-        .from('connection_ingest_rows')
-        .delete()
-        .eq('data_source_id', dataSource.id)
-        .eq('destination_table', dataSource.destination_table)
-
-      if (sample.length) {
-        const chunkSize = 200
-        for (let i = 0; i < sample.length; i += chunkSize) {
-          const chunk = sample.slice(i, i + chunkSize).map((data, idx) => ({
-            organization_id: dataSource.organization_id,
-            connection_id: connection.id,
-            data_source_id: dataSource.id,
-            run_id: run.id,
-            destination_table: dataSource.destination_table,
-            row_index: i + idx,
-            data,
-          }))
-          const { error: insertError } = await admin
-            .from('connection_ingest_rows')
-            .insert(chunk)
-          if (insertError) {
-            console.warn('[ingest] audit insert failed', insertError.message)
+      if (hasIngest) {
+        let chunks = chunkRowsForStage(ingestRows, caps)
+        if (!chunks.length && ingestMode === 'replace') {
+          chunks = [[]]
+        }
+        for (let i = 0; i < chunks.length; i += 1) {
+          const fn = ingestMode === 'append' || i > 0
+            ? 'ingest_append_rows'
+            : 'ingest_replace_rows'
+          const { data: written, error: ingestError } = await admin.rpc(fn, {
+            p_table: dataSource.destination_table,
+            p_organization_id: dataSource.organization_id,
+            p_connection_id: connection.id,
+            p_run_id: run.id,
+            p_rows: chunks[i],
+            p_cycle_time: cycleTime,
+          })
+          if (ingestError) {
+            throw createError({
+              statusCode: 500,
+              statusMessage: ingestError.message,
+            })
           }
+          rowsWritten += Number(written) || 0
+        }
+
+        if (ingestMode === 'append') {
+          const { data: cleaned } = await admin.rpc('ingest_cleanup_expired', {
+            p_table: dataSource.destination_table,
+            p_organization_id: dataSource.organization_id,
+            p_connection_id: connection.id,
+            p_retention_days: retentionDays,
+          })
+          expiredCleaned = Number(cleaned) || 0
+        }
+
+        if (ingestMode === 'replace' && !hasExport) {
+          await admin
+            .from('connection_ingest_rows')
+            .delete()
+            .eq('data_source_id', dataSource.id)
+            .eq('destination_table', dataSource.destination_table)
+
+          if (ingestRows.length) {
+            const chunkSize = 200
+            for (let i = 0; i < ingestRows.length; i += chunkSize) {
+              const chunk = ingestRows.slice(i, i + chunkSize).map((data, idx) => ({
+                organization_id: dataSource.organization_id,
+                connection_id: connection.id,
+                data_source_id: dataSource.id,
+                run_id: run.id,
+                destination_table: dataSource.destination_table,
+                row_index: i + idx,
+                data: { ...(data || {}), cycleTime },
+              }))
+              const { error: insertError } = await admin
+                .from('connection_ingest_rows')
+                .insert(chunk)
+              if (insertError) {
+                console.warn('[ingest] audit insert failed', insertError.message)
+              }
+            }
+          }
+        }
+      }
+
+      if (hasExport) {
+        const chunks = chunkRowsForStage(exportRows, caps)
+        const dualSink = hasIngest
+        for (let i = 0; i < chunks.length; i += 1) {
+          const { data: live } = await admin.rpc('staged_count_org', {
+            p_organization_id: dataSource.organization_id,
+          })
+          const liveCount = Number(live) || 0
+          if (liveCount + chunks[i].length > settings.maxConcurrentStageRowsPerOrg) {
+            throw createError({
+              statusCode: 429,
+              statusMessage: `Temp Stage cap reached (${liveCount}/${settings.maxConcurrentStageRowsPerOrg} live rows). Wait for stale TTL or raise the platform cap.`,
+            })
+          }
+          const { data: stagedCount, error: stagedError } = await admin.rpc(
+            'staged_append_rows',
+            {
+              p_organization_id: dataSource.organization_id,
+              p_connection_id: exportConnectionId,
+              p_data_source_id: dataSource.id,
+              p_run_id: run.id,
+              p_batch_no: i,
+              p_rows: chunks[i],
+            },
+          )
+          if (stagedError) {
+            throw createError({
+              statusCode: 500,
+              statusMessage: stagedError.message,
+            })
+          }
+          stagedWritten += Number(stagedCount) || 0
+          if (dualSink) {
+            await admin.rpc('staged_delete_batch', {
+              p_run_id: run.id,
+              p_batch_no: i,
+            })
+            stagedReleased += chunks[i].length
+          }
+        }
+        if (dualSink) {
+          await admin.rpc('staged_delete_run', { p_run_id: run.id })
         }
       }
     }
@@ -235,6 +381,9 @@ export async function executeDataSource(opts) {
     const summary = {
       ...pipelineResult.summary,
       written: rowsWritten,
+      stagedWritten,
+      stagedReleased,
+      expiredCleaned,
     }
 
     await admin

@@ -3,6 +3,7 @@ export {
   createMergePipeline,
   isMergePipeline,
   normalizePipeline,
+  hasPipelineSink,
   FETCH_MODES,
   FILTER_OPS,
   TRIM_MODES,

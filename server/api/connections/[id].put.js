@@ -1,3 +1,4 @@
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 import {
   decryptSecrets,
   encryptSecrets,
@@ -35,6 +36,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (body.name != null) patch.name = String(body.name).trim()
+  if (body.direction != null) patch.direction = normalizeConnectionDirection(body.direction)
   if (body.config && typeof body.config === 'object') patch.config = body.config
   if (body.status != null) patch.status = body.status
 
@@ -42,7 +44,7 @@ export default defineEventHandler(async (event) => {
     .from('connections')
     .update(patch)
     .eq('id', id)
-    .select('id, name, status, config, last_error, updated_at, connector_type_id')
+    .select('id, name, status, config, direction, last_error, updated_at, connector_type_id')
     .single()
 
   if (error) {

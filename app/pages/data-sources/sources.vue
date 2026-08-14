@@ -2,10 +2,11 @@
   <div class="mx-auto w-full max-w-6xl flex-1 px-6 py-10 lg:px-8">
     <div>
       <h1 class="font-display text-3xl font-semibold tracking-tight text-[var(--ink)]">
-        Sources
+        Data Flows
       </h1>
       <p class="mt-2 max-w-2xl text-[var(--mute)]">
         Endpoint ingest jobs (Retrieve → Filter → Ingest) or multi-source merges (Fetch → Merge → Ingest).
+        Fork Transform to Export for a Temp Stage hand-off alongside ingest.
         Credentials come from the linked connection. Active org:
         <span class="text-[var(--accent-ink)]">{{ activeOrganization?.name || 'None' }}</span>
       </p>
@@ -14,12 +15,12 @@
     <AppListToolbar>
       <AppListFilter
         v-model="listFilter"
-        placeholder="Filter sources…"
+        placeholder="Filter data flows…"
       />
       <button
         type="button"
         class="btn-primary !px-4 !py-2"
-        :disabled="!activeOrganization?.id || !connections.length"
+        :disabled="!activeOrganization?.id || !inboundConnections.length"
         @click="openCreate"
       >
         Add
@@ -33,15 +34,15 @@
     </AppListToolbar>
 
     <p
-      v-if="activeOrganization?.id && !connections.length && !pending"
+      v-if="activeOrganization?.id && !inboundConnections.length && !pending"
       class="panel mt-6 px-4 py-3 text-sm text-[var(--mute)]"
     >
-      Create a
+      Create an
       <NuxtLink
         to="/data-sources/connections"
         class="text-[var(--accent-ink)] underline"
-      >connection</NuxtLink>
-      first, then add sources that reuse it.
+      >inbound connection</NuxtLink>
+      first, then add a data flow that retrieves from it.
     </p>
 
     <p
@@ -216,11 +217,11 @@
               v-model="wizard.name"
               type="text"
               class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-              placeholder="My source"
+              placeholder="My data flow"
             >
           </div>
           <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--mute)]">Connection</label>
+            <label class="text-xs font-medium text-[var(--mute)]">Inbound connection</label>
             <select
               v-model="wizard.connectionId"
               class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
@@ -229,7 +230,7 @@
                 Select…
               </option>
               <option
-                v-for="c in connections"
+                v-for="c in inboundConnections"
                 :key="c.id"
                 :value="c.id"
               >
@@ -283,7 +284,7 @@
       <header class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] px-4 py-3">
         <div class="min-w-0 flex-1">
           <h2 class="font-display text-lg font-semibold text-[var(--ink)]">
-            {{ editingId ? 'Edit source' : 'New source' }}
+            {{ editingId ? 'Edit data flow' : 'New data flow' }}
             <span
               v-if="isDirty"
               class="ml-2 text-xs font-normal text-[var(--mute)]"
@@ -298,7 +299,7 @@
         <input
           v-model="form.name"
           type="text"
-          placeholder="Source name"
+          placeholder="Flow name"
           class="w-44 rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)]"
         >
         <select
@@ -306,9 +307,9 @@
           class="max-w-[14rem] rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)]"
           @change="onConnectionChange"
         >
-          <option value="" disabled>Connection…</option>
+          <option value="" disabled>Inbound connection…</option>
           <option
-            v-for="c in connections"
+            v-for="c in ingestConnectionChoices"
             :key="c.id"
             :value="c.id"
           >
@@ -377,7 +378,7 @@
                 class="h-full min-h-0"
                 @edit-node="onEditPipelineNode"
               >
-              <template #node-config="{ node, close, updateFilter, removeFilter, updateTransform, removeTransform, updateFetch, removeFetch, updateMerge, removeMerge, removeIngest }">
+              <template #node-config="{ node, close, updateFilter, removeFilter, updateTransform, removeTransform, updateFetch, removeFetch, updateMerge, removeMerge, updateIngest, removeIngest, updateExport, removeExport }">
                 <div
                   v-if="node.type === 'retrieve'"
                   class="space-y-3"
@@ -546,7 +547,7 @@
                 >
                   <p class="text-xs text-[var(--mute)]">
                     Pipeline output is written to the destination table set in the header.
-                    Additional Ingest nodes can fork the same output for secondary landings (same table for now).
+                    Connect an Export node from the same Transform to also Temp-Stage that output.
                   </p>
                   <div class="flex flex-col gap-1">
                     <label class="text-xs font-medium text-[var(--mute)]">Destination table</label>
@@ -559,6 +560,54 @@
                       Physical table:
                       <span class="font-mono text-[var(--accent-ink)]">ingest.{{ form.destinationTable || '…' }}</span>
                     </p>
+                    <p class="text-xs text-[var(--mute-soft)]">
+                      Every row is stamped with <span class="font-mono">cycleTime</span> (run timestamp).
+                    </p>
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-[var(--mute)]">Write mode</label>
+                    <select
+                      class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)] disabled:opacity-60"
+                      :disabled="hasExportSink"
+                      :value="hasExportSink ? 'append' : (node.data?.writeMode || 'replace')"
+                      @change="updateIngest({
+                        ...(node.data || {}),
+                        writeMode: $event.target.value,
+                        destinationTable: form.destinationTable,
+                        retentionDays: Number(node.data?.retentionDays) || 7,
+                      })"
+                    >
+                      <option value="replace">Replace existing rows</option>
+                      <option value="append">Append (keep history)</option>
+                    </select>
+                    <p
+                      v-if="hasExportSink"
+                      class="text-xs text-[var(--mute-soft)]"
+                    >
+                      Export / Temp Stage is connected, so ingest always appends each batch (replace would wipe earlier batches in the same run).
+                    </p>
+                  </div>
+                  <div
+                    v-if="hasExportSink || node.data?.writeMode === 'append'"
+                    class="flex flex-col gap-1"
+                  >
+                    <label class="text-xs font-medium text-[var(--mute)]">Retention (days)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+                      :value="Number(node.data?.retentionDays) || 7"
+                      @change="updateIngest({
+                        ...(node.data || {}),
+                        writeMode: hasExportSink ? 'append' : (node.data?.writeMode || 'append'),
+                        destinationTable: form.destinationTable,
+                        retentionDays: Number($event.target.value) || 7,
+                      })"
+                    >
+                    <p class="text-xs text-[var(--mute-soft)]">
+                      Rows older than this, by <span class="font-mono">cycleTime</span>, are deleted after each append run. Default 7 days.
+                    </p>
                   </div>
                   <div class="flex flex-wrap gap-2">
                     <button
@@ -569,12 +618,69 @@
                       Done
                     </button>
                     <button
-                      v-if="ingestNodeCount > 1"
+                      v-if="canRemoveIngest"
                       type="button"
                       class="text-sm text-[var(--danger)] hover:underline"
                       @click="removeIngest"
                     >
                       Remove Ingest node
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="node.type === 'export'"
+                  class="space-y-3"
+                >
+                  <p class="text-xs text-[var(--mute)]">
+                    Temp Stage writes a bounded batch to private <span class="font-mono">staged.batches</span>,
+                    then hands off to an outbound connection.
+                  </p>
+                  <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-[var(--mute)]">Outbound connection</label>
+                    <select
+                      class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+                      :value="node.data?.connectionId || ''"
+                      @change="updateExport({
+                        ...(node.data || {}),
+                        connectionId: $event.target.value,
+                      })"
+                    >
+                      <option value="" disabled>Select outbound connection…</option>
+                      <option
+                        v-for="c in outboundConnections"
+                        :key="c.id"
+                        :value="c.id"
+                      >
+                        {{ c.name }}
+                      </option>
+                    </select>
+                    <p
+                      v-if="!outboundConnections.length"
+                      class="text-xs text-[var(--mute-soft)]"
+                    >
+                      Create an outbound connection first (Connections → Direction: Outbound).
+                    </p>
+                  </div>
+                  <p class="text-xs text-[var(--mute-soft)]">
+                    With Ingest on the same output, each staged batch is released after ingest.
+                    Caps are under Administration → System Settings.
+                  </p>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-1.5 text-sm"
+                      @click="close"
+                    >
+                      Done
+                    </button>
+                    <button
+                      v-if="canRemoveExport"
+                      type="button"
+                      class="text-sm text-[var(--danger)] hover:underline"
+                      @click="removeExport"
+                    >
+                      Remove Export node
                     </button>
                   </div>
                 </div>
@@ -618,13 +724,14 @@ import PipelineFilterConfigPanel from '~/components/pipeline/FilterConfigPanel.v
 import PipelineTransformConfigPanel from '~/components/pipeline/TransformConfigPanel.vue'
 import PipelineFetchConfigPanel from '~/components/pipeline/FetchConfigPanel.vue'
 import PipelineMergeConfigPanel from '~/components/pipeline/MergeConfigPanel.vue'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 definePageMeta({
   layout: 'app',
   middleware: ['auth', 'admin'],
 })
 
-useHead({ title: 'Sources' })
+useHead({ title: 'Data Flows' })
 
 const route = useRoute()
 const { activeOrganization } = useOrganization()
@@ -692,6 +799,20 @@ const ingestNodeCount = computed(() =>
   (form.pipeline?.nodes || []).filter((n) => n.type === 'ingest').length,
 )
 
+const exportNodeCount = computed(() =>
+  (form.pipeline?.nodes || []).filter((n) => n.type === 'export').length,
+)
+
+const hasExportSink = computed(() => exportNodeCount.value > 0)
+
+const canRemoveIngest = computed(() =>
+  ingestNodeCount.value > 1 || (ingestNodeCount.value === 1 && exportNodeCount.value >= 1),
+)
+
+const canRemoveExport = computed(() =>
+  exportNodeCount.value > 1 || (exportNodeCount.value === 1 && ingestNodeCount.value >= 1),
+)
+
 const editorBusy = computed(() => Boolean(editorBusyMode.value) || saving.value)
 
 const filteredItems = computed(() => {
@@ -725,6 +846,21 @@ const isDirty = computed(() => {
 const selectedConnection = computed(() =>
   connections.value.find((c) => c.id === form.connectionId) || null,
 )
+
+const inboundConnections = computed(() =>
+  connections.value.filter((c) => normalizeConnectionDirection(c.direction) === 'inbound'),
+)
+
+const outboundConnections = computed(() =>
+  connections.value.filter((c) => normalizeConnectionDirection(c.direction) === 'outbound'),
+)
+
+const ingestConnectionChoices = computed(() => {
+  const list = [...inboundConnections.value]
+  const current = connections.value.find((c) => c.id === form.connectionId)
+  if (current && !list.some((c) => c.id === current.id)) list.unshift(current)
+  return list
+})
 
 const selectedType = computed(() => {
   const typeId = selectedConnection.value?.connector_type_id
@@ -1025,7 +1161,11 @@ function openCreate() {
   wizardError.value = ''
   wizard.template = 'retrieve'
   wizard.name = ''
-  wizard.connectionId = String(route.query.connectionId || connections.value[0]?.id || '')
+  wizard.connectionId = String(route.query.connectionId || inboundConnections.value[0]?.id || '')
+  const picked = connections.value.find((c) => c.id === wizard.connectionId)
+  if (picked && normalizeConnectionDirection(picked.direction) !== 'inbound') {
+    wizard.connectionId = inboundConnections.value[0]?.id || ''
+  }
   wizard.destinationTable = ''
   wizardOpen.value = true
 }
@@ -1045,7 +1185,12 @@ function continueWizard() {
     return
   }
   if (!connectionId) {
-    wizardError.value = 'Select a connection'
+    wizardError.value = 'Select an inbound connection'
+    return
+  }
+  const conn = connections.value.find((c) => c.id === connectionId)
+  if (!conn || normalizeConnectionDirection(conn.direction) !== 'inbound') {
+    wizardError.value = 'Data flows must use an inbound connection'
     return
   }
   if (!destinationTable || !/^[a-z][a-z0-9_]{0,62}$/.test(destinationTable)) {
@@ -1053,7 +1198,6 @@ function continueWizard() {
     return
   }
 
-  const conn = connections.value.find((c) => c.id === connectionId)
   const typeId = conn?.connector_type_id || conn?.connector_types?.id
   const typeDef = typeId ? catalogByTypeId.value[typeId] : null
 

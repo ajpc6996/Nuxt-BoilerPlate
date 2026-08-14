@@ -71,6 +71,9 @@ const toneClass = computed(() => {
   if (props.tone === 'ingest') {
     return 'border-emerald-500/50 bg-emerald-500/10'
   }
+  if (props.tone === 'export') {
+    return 'border-cyan-500/50 bg-cyan-500/10'
+  }
   if (props.tone === 'filter') {
     return 'border-[var(--border)] bg-[var(--surface-raised)]'
   }

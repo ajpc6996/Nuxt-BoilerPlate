@@ -65,7 +65,7 @@ export function layoutPipelineNodes(nodes, edges, opts = {}) {
   })
 
   // Stable order within a layer
-  const typeRank = { retrieve: 0, fetch: 0, merge: 1, filter: 2, transform: 3, ingest: 4 }
+  const typeRank = { retrieve: 0, fetch: 0, merge: 1, filter: 2, transform: 3, ingest: 4, export: 4 }
   Object.keys(byDepth).forEach((d) => {
     byDepth[d].sort((a, b) => {
       const na = list.find((n) => n.id === a)

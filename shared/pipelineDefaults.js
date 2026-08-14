@@ -19,7 +19,7 @@ export function createDefaultPipeline(opts = {}) {
         id: 'ingest',
         type: 'ingest',
         position: { x: 520, y: 140 },
-        data: { label: 'Ingest' },
+        data: { label: 'Ingest', writeMode: 'replace', retentionDays: 7 },
       },
     ],
     edges: [
@@ -78,7 +78,7 @@ export function createMergePipeline(opts = {}) {
         id: 'ingest',
         type: 'ingest',
         position: { x: 600, y: 140 },
-        data: { label: 'Ingest' },
+        data: { label: 'Ingest', writeMode: 'replace', retentionDays: 7 },
       },
     ],
     edges: [
@@ -100,6 +100,15 @@ export function isMergePipeline(raw) {
 }
 
 /**
+ * Ingest and/or Export (Temp Stage) count as pipeline sinks.
+ * @param {Array<{ type?: string }>} nodes
+ */
+export function hasPipelineSink(nodes) {
+  const list = Array.isArray(nodes) ? nodes : []
+  return list.some((n) => n?.type === 'ingest' || n?.type === 'export')
+}
+
+/**
  * @param {unknown} raw
  */
 export function normalizePipeline(raw) {
@@ -112,7 +121,7 @@ export function normalizePipeline(raw) {
   const merge = isMergePipeline(raw)
 
   if (merge) {
-    if (!nodes.some((n) => n?.type === 'ingest')) {
+    if (!hasPipelineSink(nodes)) {
       return createMergePipeline({ debug: Boolean(raw.debug) })
     }
     return {
@@ -124,7 +133,7 @@ export function normalizePipeline(raw) {
     }
   }
 
-  if (!nodes.some((n) => n?.type === 'retrieve') || !nodes.some((n) => n?.type === 'ingest')) {
+  if (!nodes.some((n) => n?.type === 'retrieve') || !hasPipelineSink(nodes)) {
     return createDefaultPipeline({ debug: Boolean(raw.debug) })
   }
 

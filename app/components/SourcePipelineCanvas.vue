@@ -123,6 +123,15 @@
           >
             + Ingest
           </button>
+          <button
+            type="button"
+            class="rounded-md border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-1.5 text-sm text-[var(--ink)] hover:border-[var(--accent)]"
+            draggable="true"
+            @dragstart="onPaletteDrag($event, 'export')"
+            @click="addExportNode()"
+          >
+            + Export
+          </button>
         </template>
 
         <template v-else-if="paletteCategory === 'actions'">
@@ -209,7 +218,10 @@
             :remove-fetch="removeSelectedOperator"
             :update-merge="patchSelectedOperator"
             :remove-merge="removeSelectedOperator"
+            :update-ingest="patchSelectedOperator"
             :remove-ingest="removeSelectedOperator"
+            :update-export="patchSelectedOperator"
+            :remove-export="removeSelectedOperator"
           />
         </div>
       </aside>
@@ -247,6 +259,7 @@ import MergeNode from '~/components/pipeline/MergeNode.vue'
 import FilterNode from '~/components/pipeline/FilterNode.vue'
 import TransformNode from '~/components/pipeline/TransformNode.vue'
 import IngestNode from '~/components/pipeline/IngestNode.vue'
+import ExportNode from '~/components/pipeline/ExportNode.vue'
 
 const FLOW_ID = 'source-pipeline-canvas'
 /** Default zoom is 75% of Vue Flow's usual 1.0. */
@@ -285,6 +298,7 @@ const nodeTypes = {
   filter: markRaw(FilterNode),
   transform: markRaw(TransformNode),
   ingest: markRaw(IngestNode),
+  export: markRaw(ExportNode),
 }
 
 const defaultEdgeOptions = {
@@ -351,6 +365,7 @@ const configTitle = computed(() => {
   if (t === 'filter') return 'Filter'
   if (t === 'transform') return 'Transform'
   if (t === 'ingest') return 'Ingest'
+  if (t === 'export') return 'Export / Temp Stage'
   return 'Configure'
 })
 
@@ -498,7 +513,7 @@ function isValidConnection(connection) {
   const sourceNode = nodes.value.find((n) => n.id === connection.source)
   const targetNode = nodes.value.find((n) => n.id === connection.target)
   if (!sourceNode || !targetNode) return false
-  if (sourceNode.type === 'ingest') return false
+  if (sourceNode.type === 'ingest' || sourceNode.type === 'export') return false
   if (targetNode.type === 'retrieve' || targetNode.type === 'fetch') return false
   return true
 }
@@ -512,7 +527,7 @@ function onConnect(params) {
   const targetType = nodes.value.find((n) => n.id === params.target)?.type
   let next = [...edges.value]
   // Mid-chain / Ingest accept a single inbound edge
-  if (targetType === 'filter' || targetType === 'transform' || targetType === 'ingest') {
+  if (targetType === 'filter' || targetType === 'transform' || targetType === 'ingest' || targetType === 'export') {
     next = next.filter((e) => e.target !== params.target)
   }
   // Merge accepts exactly two inbound edges
@@ -602,6 +617,7 @@ const TYPE_COLUMN_X = {
   filter: 280,
   transform: 400,
   ingest: 600,
+  export: 600,
 }
 
 const TYPE_STACK_GAP = 120
@@ -742,6 +758,8 @@ function addIngestNode(position) {
       data: {
         label: count ? `Ingest ${count + 1}` : 'Ingest',
         destinationTable: props.destinationTable,
+        writeMode: 'replace',
+        retentionDays: 7,
       },
     },
   ]
@@ -752,11 +770,37 @@ function addIngestNode(position) {
 }
 
 /**
+ * @param {{ x?: number, y?: number }} [position]
+ */
+function addExportNode(position) {
+  const id = `export_${Date.now().toString(36)}`
+  const count = nodes.value.filter((n) => n.type === 'export').length
+  const pos = nextPositionForType('export', position || null)
+  nodes.value = [
+    ...nodes.value,
+    {
+      id,
+      type: 'export',
+      position: pos,
+      connectable: true,
+      data: {
+        label: count ? `Export ${count + 1}` : 'Export',
+        useTempStage: true,
+      },
+    },
+  ]
+  selectedNodeId.value = id
+  configOpen.value = true
+  emit('edit-node', { id, type: 'export' })
+  emitPipeline()
+}
+
+/**
  * @param {DragEvent} event
  */
 function onCanvasDrop(event) {
   const type = event.dataTransfer?.getData('application/pipeline-node')
-  const allowed = new Set(['filter', 'transform', 'fetch', 'merge', 'ingest'])
+  const allowed = new Set(['filter', 'transform', 'fetch', 'merge', 'ingest', 'export'])
   if (!allowed.has(type)) return
   if ((type === 'fetch' || type === 'merge') && !isMergeCanvas.value) return
   const bounds = event.currentTarget.getBoundingClientRect()
@@ -770,6 +814,7 @@ function onCanvasDrop(event) {
   else if (type === 'fetch') addFetchNode(pos)
   else if (type === 'merge') addMergeNode(pos)
   else if (type === 'ingest') addIngestNode(pos)
+  else if (type === 'export') addExportNode(pos)
   else addFilterNode(pos)
 }
 
@@ -789,7 +834,7 @@ function removeSelectedOperator() {
   const id = selectedNodeId.value
   if (!id) return
   const node = nodes.value.find((n) => n.id === id)
-  const removable = new Set(['filter', 'transform', 'fetch', 'merge', 'ingest'])
+  const removable = new Set(['filter', 'transform', 'fetch', 'merge', 'ingest', 'export'])
   if (!node || !removable.has(node.type)) return
   if (node.type === 'fetch') {
     const fetches = nodes.value.filter((n) => n.type === 'fetch')
@@ -799,9 +844,9 @@ function removeSelectedOperator() {
     const merges = nodes.value.filter((n) => n.type === 'merge')
     if (merges.length <= 1) return
   }
-  if (node.type === 'ingest') {
-    const ingests = nodes.value.filter((n) => n.type === 'ingest')
-    if (ingests.length <= 1) return
+  if (node.type === 'ingest' || node.type === 'export') {
+    const sinks = nodes.value.filter((n) => n.type === 'ingest' || n.type === 'export')
+    if (sinks.length <= 1) return
   }
   nodes.value = nodes.value.filter((n) => n.id !== id)
   edges.value = edges.value.filter((e) => e.source !== id && e.target !== id)

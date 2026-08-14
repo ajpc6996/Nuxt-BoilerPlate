@@ -1,4 +1,5 @@
 import { encryptSecrets } from '~~/server/utils/connectorCrypto.js'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
@@ -56,11 +57,12 @@ export default defineEventHandler(async (event) => {
       connector_type_id: connectorTypeId,
       name,
       destination_table: null,
+      direction: normalizeConnectionDirection(body?.direction),
       config,
       status: 'draft',
       created_by: user.id,
     })
-    .select('id, name, status, config, connector_type_id, created_at')
+    .select('id, name, status, config, direction, connector_type_id, created_at')
     .single()
 
   if (error) {

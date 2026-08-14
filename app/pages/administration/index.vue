@@ -48,6 +48,12 @@ const allCards = [
     roles: ['platform'],
   },
   {
+    label: 'System Settings',
+    to: '/administration/system-settings',
+    description: 'Platform-wide Temp Stage caps: batch size, concurrent staged rows, and stale TTL.',
+    roles: ['platform'],
+  },
+  {
     label: 'Licence & usage',
     to: '/administration/licence',
     description: 'View plan, feature flags, and hard usage limits for the active organization.',

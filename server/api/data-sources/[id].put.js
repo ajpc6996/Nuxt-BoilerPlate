@@ -1,6 +1,7 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
 import { normalizePipeline } from '~~/server/utils/connectors/pipeline/defaults.js'
 import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -48,12 +49,18 @@ export default defineEventHandler(async (event) => {
     const connectionId = String(body.connectionId)
     const { data: connection } = await admin
       .from('connections')
-      .select('id')
+      .select('id, direction')
       .eq('id', connectionId)
       .eq('organization_id', organizationId)
       .maybeSingle()
     if (!connection) {
       throw createError({ statusCode: 400, statusMessage: 'Unknown connection' })
+    }
+    if (normalizeConnectionDirection(connection.direction) !== 'inbound') {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Data flows must use an inbound connection',
+      })
     }
     patch.connection_id = connectionId
   }

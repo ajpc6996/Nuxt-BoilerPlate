@@ -1,6 +1,7 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
 import { normalizePipeline } from '~~/server/utils/connectors/pipeline/defaults.js'
 import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
@@ -35,7 +36,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: connection, error: connError } = await admin
     .from('connections')
-    .select('id, organization_id, connector_types(is_enabled)')
+    .select('id, organization_id, direction, connector_types(is_enabled)')
     .eq('id', connectionId)
     .eq('organization_id', organizationId)
     .maybeSingle()
@@ -45,6 +46,12 @@ export default defineEventHandler(async (event) => {
   }
   if (!connection.connector_types?.is_enabled) {
     throw createError({ statusCode: 400, statusMessage: 'Connector type is disabled' })
+  }
+  if (normalizeConnectionDirection(connection.direction) !== 'inbound') {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'Data flows must use an inbound connection',
+    })
   }
 
   const { data: item, error } = await admin

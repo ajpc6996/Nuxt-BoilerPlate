@@ -68,6 +68,7 @@
         <thead class="border-b border-[var(--border)] text-[var(--mute)]">
           <tr>
             <th class="px-3 py-2 font-medium">Name</th>
+            <th class="px-3 py-2 font-medium">Direction</th>
             <th class="px-3 py-2 font-medium">Type</th>
             <th class="px-3 py-2 font-medium">Status</th>
             <th class="px-3 py-2 font-medium" />
@@ -80,6 +81,9 @@
             class="border-b border-[var(--border-soft)]"
           >
             <td class="px-3 py-3 text-[var(--ink)]">{{ row.name }}</td>
+            <td class="px-3 py-3 text-[var(--mute)]">
+              {{ row.direction === 'outbound' ? 'Outbound' : 'Inbound' }}
+            </td>
             <td class="px-3 py-3 text-[var(--mute)]">
               {{ row.connector_types?.name || '—' }}
             </td>
@@ -104,7 +108,7 @@
                   :to="`/data-sources/sources?connectionId=${row.id}`"
                   class="btn-secondary !px-2 !py-1 text-xs"
                 >
-                  Sources
+                  Data Flows
                 </NuxtLink>
                 <button
                   type="button"
@@ -119,7 +123,7 @@
           </tr>
           <tr v-if="!filteredItems.length">
             <td
-              colspan="4"
+              colspan="5"
               class="px-3 py-8 text-center text-[var(--mute)]"
             >
               {{ items.length ? 'No connections match this filter.' : 'No connections yet. Create one, then add sources that reuse it.' }}
@@ -139,12 +143,18 @@
           {{ editingId ? 'Edit connection' : 'New connection' }}
         </h2>
 
-        <div class="mt-4 space-y-4">
+        <form
+          class="mt-4 space-y-4"
+          autocomplete="off"
+          @submit.prevent="saveConnection"
+        >
           <div class="flex flex-col gap-1">
             <label class="text-xs font-medium text-[var(--mute)]">Name</label>
             <input
               v-model="form.name"
               type="text"
+              name="zorro-connection-name"
+              autocomplete="off"
               placeholder="e.g. Acme API – Production"
               class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
             >
@@ -167,6 +177,20 @@
                 {{ t.name }}
               </option>
             </select>
+          </div>
+
+          <div class="flex flex-col gap-1">
+            <label class="text-xs font-medium text-[var(--mute)]">Direction</label>
+            <select
+              v-model="form.direction"
+              class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+            >
+              <option value="inbound">Inbound — retrieve into a data flow</option>
+              <option value="outbound">Outbound — export from Temp Stage</option>
+            </select>
+            <p class="text-xs text-[var(--mute-soft)]">
+              Inbound connections appear on Data Flows (Retrieve / Ingest). Outbound connections appear on Export nodes.
+            </p>
           </div>
 
           <div v-if="selectedType && hasConnectionFields">
@@ -224,7 +248,6 @@
           >
             This type has no shared connection fields. You can still create a named connection for sources to attach to.
           </p>
-        </div>
 
         <div class="mt-6 flex justify-end gap-2">
           <button
@@ -235,20 +258,23 @@
             Cancel
           </button>
           <button
-            type="button"
+            type="submit"
             class="btn-primary !px-4 !py-2"
             :disabled="saving"
-            @click="saveConnection"
           >
             {{ saving ? 'Saving…' : 'Save' }}
           </button>
         </div>
+        </form>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { isUrlFieldKey, looksLikeEmail } from '~~/shared/awsRegions.js'
+import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
+
 definePageMeta({
   layout: 'app',
   middleware: ['auth', 'admin'],
@@ -274,6 +300,7 @@ const saving = ref(false)
 const form = reactive({
   name: '',
   connectorTypeId: '',
+  direction: 'inbound',
   config: {},
   credentials: {},
   hasSecrets: false,
@@ -290,6 +317,7 @@ const filteredItems = computed(() => {
     const hay = [
       row.name,
       row.status,
+      row.direction,
       row.connector_types?.name,
       row.connector_types?.key,
     ].map((v) => String(v || '').toLowerCase()).join(' ')
@@ -345,7 +373,9 @@ function defaultsFromSchema(schema) {
   const out = {}
   const properties = schema?.properties || {}
   Object.entries(properties).forEach(([key, def]) => {
-    if (def.default !== undefined) out[key] = def.default
+    if (def.default === undefined) return
+    if (isUrlFieldKey(key) && looksLikeEmail(def.default)) return
+    out[key] = def.default
   })
   return out
 }
@@ -362,6 +392,7 @@ function openCreate() {
   editingId.value = null
   form.name = ''
   form.connectorTypeId = catalog.value[0]?.id || ''
+  form.direction = 'inbound'
   form.config = defaultsFromSchema(selectedType.value?.connection_schema)
   if (needsAuthModeFallback.value && !form.config.authMode) {
     form.config.authMode = 'none'
@@ -384,6 +415,7 @@ async function openEdit(row) {
     editingId.value = item.id
     form.name = item.name
     form.connectorTypeId = item.connector_type_id
+    form.direction = normalizeConnectionDirection(item.direction)
     form.hasSecrets = Boolean(item.hasSecrets)
     form.config = { ...(item.config || {}) }
     form.credentials = {}
@@ -441,6 +473,7 @@ async function saveConnection() {
         body: {
           organizationId: activeOrganization.value.id,
           name: form.name,
+          direction: form.direction,
           config: form.config,
           credentials: form.credentials,
         },
@@ -454,6 +487,7 @@ async function saveConnection() {
           organizationId: activeOrganization.value.id,
           connectorTypeId: form.connectorTypeId,
           name: form.name,
+          direction: form.direction,
           config: form.config,
           credentials: form.credentials,
         },

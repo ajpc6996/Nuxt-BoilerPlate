@@ -404,6 +404,8 @@ Rules:
 - Put reusable auth/base URL fields in connection_schema; put path/paging/lookup in config_schema.
 - credential_schema properties are secrets only (never put secrets in connection_schema).
 - Use JSON Schema draft-ish: type/object, properties, required, title, description, enum, default.
+- Never use format "email" on URL/endpoint/host fields. Custom S3/MinIO endpoints must be type string, default "", format uri.
+- AWS/S3 region fields (region, awsRegion) MUST use an enum of AWS region codes (e.g. us-east-1, eu-west-1), not a free-text string.
 - If token refresh is needed, set capabilities.tokenRenewal true and include refresh-related credential fields.
 - If paging is needed, set capabilities.paging true and include pagingMode etc. in config_schema.
 - key must be lowercase snake_case, start with a letter, max 48 chars.`

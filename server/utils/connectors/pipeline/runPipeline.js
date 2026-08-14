@@ -168,12 +168,12 @@ export function executePipeline(opts) {
       continue
     }
 
-    if (node.type === 'ingest') {
+    if (node.type === 'ingest' || node.type === 'export') {
       const input = outputs[parentEdge.source] || []
       outputs[node.id] = input
       steps.push({
         nodeId: node.id,
-        type: 'ingest',
+        type: node.type,
         in: input.length,
         out: input.length,
         sample: debug ? sampleRows(input) : undefined,
@@ -205,12 +205,23 @@ export function executePipeline(opts) {
  */
 function finish(outputs, steps, rootIds, debug, untilNodeId) {
   const ingestStep = steps.find((s) => s.type === 'ingest')
-  const finalKey = untilNodeId || ingestStep?.nodeId
+  const exportStep = steps.find((s) => s.type === 'export')
+  const finalKey = untilNodeId || ingestStep?.nodeId || exportStep?.nodeId
   const finalRows = (finalKey && outputs[finalKey]) || []
   const retrieved = rootIds.reduce((sum, id) => sum + (outputs[id]?.length || 0), 0)
 
+  const sinkOutputs = {
+    ingest: steps
+      .filter((s) => s.type === 'ingest')
+      .map((s) => ({ nodeId: s.nodeId, rows: outputs[s.nodeId] || [] })),
+    export: steps
+      .filter((s) => s.type === 'export')
+      .map((s) => ({ nodeId: s.nodeId, rows: outputs[s.nodeId] || [] })),
+  }
+
   return {
     rows: finalRows,
+    sinkOutputs,
     summary: {
       retrieved,
       afterPipeline: finalRows.length,

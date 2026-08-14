@@ -53,9 +53,9 @@ const allCards = [
     roles: ['platform', 'orgAdmin'],
   },
   {
-    label: 'Sources',
+    label: 'Data Flows',
     to: '/data-sources/sources',
-    description: 'Endpoint ingest jobs with Retrieve → Filter → Transform → Ingest pipelines.',
+    description: 'Retrieve → transform → ingest and optional Export (Temp Stage) pipelines.',
     roles: ['platform', 'orgAdmin'],
   },
 ]

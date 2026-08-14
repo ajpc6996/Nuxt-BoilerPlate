@@ -24,25 +24,27 @@ function validateRetrievePipeline(pipeline) {
 
   const retrieves = nodes.filter((n) => n.type === 'retrieve')
   const ingests = nodes.filter((n) => n.type === 'ingest')
+  const exports = nodes.filter((n) => n.type === 'export')
+  const sinks = [...ingests, ...exports]
 
   if (retrieves.length !== 1) {
     return { ok: false, error: 'Pipeline must have exactly one Retrieve node' }
   }
-  if (ingests.length < 1) {
-    return { ok: false, error: 'Pipeline must have at least one Ingest node' }
+  if (!sinks.length) {
+    return { ok: false, error: 'Pipeline must have at least one Ingest or Export node' }
   }
 
   const edgeCheck = validateEdges(nodes, edges)
   if (!edgeCheck.ok) return edgeCheck
 
-  const allowed = new Set(['retrieve', 'filter', 'transform', 'ingest'])
+  const allowed = new Set(['retrieve', 'filter', 'transform', 'ingest', 'export'])
   for (const n of nodes) {
     if (!allowed.has(n.type)) {
       return { ok: false, error: `Unsupported node type: ${n.type}` }
     }
   }
 
-  const ingestCheck = validateIngestNodes(ingests, edges)
+  const ingestCheck = validateSinkNodes(sinks, edges)
   if (!ingestCheck.ok) return ingestCheck
 
   const retrieveId = retrieves[0].id
@@ -53,7 +55,7 @@ function validateRetrievePipeline(pipeline) {
   const midCheck = validateMidChain(nodes, edges)
   if (!midCheck.ok) return midCheck
 
-  return validateReachability(nodes, edges, [retrieveId], ingests.map((n) => n.id), 'Retrieve')
+  return validateReachability(nodes, edges, [retrieveId], sinks.map((n) => n.id), 'Retrieve')
 }
 
 /**
@@ -67,6 +69,8 @@ function validateMergePipeline(pipeline) {
   const merges = nodes.filter((n) => n.type === 'merge')
   const retrieves = nodes.filter((n) => n.type === 'retrieve')
   const ingests = nodes.filter((n) => n.type === 'ingest')
+  const exports = nodes.filter((n) => n.type === 'export')
+  const sinks = [...ingests, ...exports]
 
   if (retrieves.length) {
     return { ok: false, error: 'Merge pipelines cannot include a Retrieve node' }
@@ -77,14 +81,14 @@ function validateMergePipeline(pipeline) {
   if (merges.length < 1) {
     return { ok: false, error: 'Merge pipeline needs at least one Merge node' }
   }
-  if (ingests.length < 1) {
-    return { ok: false, error: 'Pipeline must have at least one Ingest node' }
+  if (!sinks.length) {
+    return { ok: false, error: 'Pipeline must have at least one Ingest or Export node' }
   }
 
   const edgeCheck = validateEdges(nodes, edges)
   if (!edgeCheck.ok) return edgeCheck
 
-  const allowed = new Set(['fetch', 'merge', 'filter', 'transform', 'ingest'])
+  const allowed = new Set(['fetch', 'merge', 'filter', 'transform', 'ingest', 'export'])
   for (const n of nodes) {
     if (!allowed.has(n.type)) {
       return { ok: false, error: `Unsupported node type: ${n.type}` }
@@ -125,10 +129,9 @@ function validateMergePipeline(pipeline) {
   const midCheck = validateMidChain(nodes, edges)
   if (!midCheck.ok) return midCheck
 
-  const ingestCheck = validateIngestNodes(ingests, edges)
+  const ingestCheck = validateSinkNodes(sinks, edges)
   if (!ingestCheck.ok) return ingestCheck
 
-  // Every node reachable from at least one Fetch
   const roots = fetches.map((f) => f.id)
   const reachable = new Set(roots)
   let changed = true
@@ -146,9 +149,9 @@ function validateMergePipeline(pipeline) {
       return { ok: false, error: `Node “${n.id}” is not reachable from a Fetch` }
     }
   }
-  for (const n of ingests) {
+  for (const n of sinks) {
     if (!reachable.has(n.id)) {
-      return { ok: false, error: `Ingest “${n.id}” is not reachable from Fetch nodes` }
+      return { ok: false, error: `Sink “${n.id}” is not reachable from Fetch nodes` }
     }
   }
 
@@ -161,14 +164,15 @@ function validateMergePipeline(pipeline) {
 }
 
 /**
- * @param {Array} ingests
+ * @param {Array} sinks
  * @param {Array} edges
  */
-function validateIngestNodes(ingests, edges) {
-  for (const n of ingests) {
+function validateSinkNodes(sinks, edges) {
+  for (const n of sinks) {
     const inbound = edges.filter((e) => e.target === n.id)
+    const label = n.type === 'export' ? 'Export' : 'Ingest'
     if (inbound.length !== 1) {
-      return { ok: false, error: `Ingest “${n.id}” needs exactly one incoming connection` }
+      return { ok: false, error: `${label} “${n.id}” needs exactly one incoming connection` }
     }
   }
   return { ok: true }
@@ -259,7 +263,7 @@ function validateReachability(nodes, edges, rootIds, ingestIds, rootLabel) {
   }
   for (const ingestId of (Array.isArray(ingestIds) ? ingestIds : [ingestIds])) {
     if (!reachable.has(ingestId)) {
-      return { ok: false, error: `Ingest is not reachable from ${rootLabel}` }
+      return { ok: false, error: `Sink is not reachable from ${rootLabel}` }
     }
   }
 
