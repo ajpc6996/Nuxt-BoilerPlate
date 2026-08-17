@@ -21,7 +21,7 @@ export async function proposeMigrationPlan(input) {
     })
   }
 
-  const runners = listRegisteredRunnerKeys()
+  const runners = await listRegisteredRunnerKeys()
   const system = buildMigrationSystemPrompt(runners)
   const userParts = [`Migration goal:\n${description}`]
   if (input.sourceSummary) userParts.push(`Source system:\n${String(input.sourceSummary).trim()}`)
