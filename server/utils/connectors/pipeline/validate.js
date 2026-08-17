@@ -75,6 +75,9 @@ function validateMergePipeline(pipeline) {
   if (retrieves.length) {
     return { ok: false, error: 'Merge pipelines cannot include a Retrieve node' }
   }
+  if (merges.length === 0 && fetches.length >= 1) {
+    return validateSingleFetchPipeline(pipeline)
+  }
   if (fetches.length < 2) {
     return { ok: false, error: 'Merge pipeline needs at least two Fetch nodes' }
   }
@@ -152,6 +155,86 @@ function validateMergePipeline(pipeline) {
   for (const n of sinks) {
     if (!reachable.has(n.id)) {
       return { ok: false, error: `Sink “${n.id}” is not reachable from Fetch nodes` }
+    }
+  }
+
+  const order = topologicalOrder(nodes, edges)
+  if (!order) {
+    return { ok: false, error: 'Pipeline has a cycle; connect left-to-right only' }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * Fetch → Filter/Transform → Ingest/Export (no Merge node).
+ * @param {{ nodes: Array, edges: Array }} pipeline
+ */
+function validateSingleFetchPipeline(pipeline) {
+  const nodes = pipeline?.nodes || []
+  const edges = pipeline?.edges || []
+
+  const fetches = nodes.filter((n) => n.type === 'fetch')
+  const merges = nodes.filter((n) => n.type === 'merge')
+  const ingests = nodes.filter((n) => n.type === 'ingest')
+  const exports = nodes.filter((n) => n.type === 'export')
+  const sinks = [...ingests, ...exports]
+
+  if (merges.length) {
+    return { ok: false, error: 'Single-fetch pipelines cannot include a Merge node' }
+  }
+  if (fetches.length !== 1) {
+    return { ok: false, error: 'Single-fetch pipeline needs exactly one Fetch node' }
+  }
+  if (!sinks.length) {
+    return { ok: false, error: 'Pipeline must have at least one Ingest or Export node' }
+  }
+
+  const edgeCheck = validateEdges(nodes, edges)
+  if (!edgeCheck.ok) return edgeCheck
+
+  const allowed = new Set(['fetch', 'filter', 'transform', 'ingest', 'export'])
+  for (const n of nodes) {
+    if (!allowed.has(n.type)) {
+      return { ok: false, error: `Unsupported node type: ${n.type}` }
+    }
+  }
+
+  for (const n of fetches) {
+    const inbound = edges.filter((e) => e.target === n.id)
+    const outbound = edges.filter((e) => e.source === n.id)
+    if (inbound.length) {
+      return { ok: false, error: `Fetch “${n.id}” cannot have incoming connections` }
+    }
+    if (outbound.length < 1) {
+      return { ok: false, error: `Fetch “${n.id}” needs an outgoing connection` }
+    }
+    if (!String(n.data?.sourceId || '').trim()) {
+      return { ok: false, error: `Fetch “${n.id}” needs a source selected` }
+    }
+  }
+
+  const midCheck = validateMidChain(nodes, edges)
+  if (!midCheck.ok) return midCheck
+
+  const ingestCheck = validateSinkNodes(sinks, edges)
+  if (!ingestCheck.ok) return ingestCheck
+
+  const roots = fetches.map((f) => f.id)
+  const reachable = new Set(roots)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const e of edges) {
+      if (reachable.has(e.source) && !reachable.has(e.target)) {
+        reachable.add(e.target)
+        changed = true
+      }
+    }
+  }
+  for (const n of nodes) {
+    if (!reachable.has(n.id)) {
+      return { ok: false, error: `Node “${n.id}” is not reachable from Fetch` }
     }
   }
 

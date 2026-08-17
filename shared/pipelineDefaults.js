@@ -94,7 +94,7 @@ export function createMergePipeline(opts = {}) {
  */
 export function isMergePipeline(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
-  if (raw.kind === 'merge') return true
+  if (raw.kind === 'merge' || raw.kind === 'fetch') return true
   const nodes = Array.isArray(raw.nodes) ? raw.nodes : []
   return nodes.some((n) => n?.type === 'fetch' || n?.type === 'merge')
 }

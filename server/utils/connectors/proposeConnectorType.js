@@ -94,6 +94,51 @@ export async function proposeConnectorType(input) {
 }
 
 /**
+ * Call configured LLM and return parsed JSON object.
+ * @param {{ system: string, userText: string }} input
+ */
+export async function callLlmJson(input) {
+  const system = String(input.system || '')
+  const userText = String(input.userText || '')
+  const provider = resolveLlmProvider()
+  const modelInfo = describeProviderModel(provider)
+
+  let content = ''
+  try {
+    if (provider === 'gemini') {
+      content = await callGemini({ system, userText })
+    }
+    else {
+      content = await callOpenAi({ system, userText })
+    }
+  }
+  catch (err) {
+    if (err?.statusCode && err?.statusMessage && !err?.__llmRaw) {
+      throw err
+    }
+    const detail = formatLlmError(err, provider, modelInfo.model)
+    throw createError({
+      statusCode: detail.httpStatus || 502,
+      statusMessage: detail.message,
+    })
+  }
+
+  if (!content || typeof content !== 'string') {
+    throw createError({ statusCode: 502, statusMessage: 'LLM returned empty content' })
+  }
+
+  try {
+    return JSON.parse(stripCodeFences(content))
+  }
+  catch (parseErr) {
+    throw createError({
+      statusCode: 502,
+      statusMessage: `LLM returned invalid JSON: ${parseErr?.message || 'parse error'}`,
+    })
+  }
+}
+
+/**
  * Prefer LLM_PROVIDER; otherwise gemini if key present, else openai.
  */
 function resolveLlmProvider() {

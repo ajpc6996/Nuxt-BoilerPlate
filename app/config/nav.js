@@ -75,6 +75,21 @@ export const appNavGroups = [
     ],
   },
   {
+    id: 'migrations',
+    label: 'Migrations',
+    icon: 'migrations',
+    to: '/migrations',
+    roles: ['platform', 'orgAdmin'],
+    children: [
+      {
+        id: 'migrations-list',
+        label: 'Migration Projects',
+        to: '/migrations',
+        roles: ['platform', 'orgAdmin'],
+      },
+    ],
+  },
+  {
     id: 'data-sources',
     label: 'Data Sources',
     icon: 'data-sources',
