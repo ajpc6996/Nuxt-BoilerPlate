@@ -112,3 +112,37 @@ export function parseCsv(text, delimiter = ',') {
     return obj
   })
 }
+
+/**
+ * @param {unknown} value
+ */
+function serializeCsvValue(value) {
+  if (value == null) return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+/**
+ * Convert row objects to CSV text (header row from union of keys).
+ * @param {Record<string, unknown>[]} rows
+ * @param {string} [delimiter]
+ */
+export function rowsToCsv(rows, delimiter = ',') {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : []
+  if (!list.length) return ''
+
+  const headers = [...new Set(list.flatMap((r) => Object.keys(r)))]
+  const escape = (val) => {
+    const s = serializeCsvValue(val)
+    if (s.includes('"') || s.includes('\n') || s.includes(delimiter)) {
+      return `"${s.replace(/"/g, '""')}"`
+    }
+    return s
+  }
+
+  const lines = [
+    headers.map(escape).join(delimiter),
+    ...list.map((row) => headers.map((h) => escape(row[h])).join(delimiter)),
+  ]
+  return lines.join('\n')
+}

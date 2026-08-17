@@ -1,10 +1,20 @@
-import { parseCsv } from '../helpers.js'
+import { isOutbound } from '~~/shared/runnerDirection.js'
+import { parseCsv, rowsToCsv } from '../helpers.js'
+import { deliverFileContent } from '../fileDelivery.js'
 
 /**
- * @param {{ config: Record<string, unknown>, secrets?: Record<string, unknown>, mode?: string }} ctx
- * @returns {Promise<{ rows: Record<string, unknown>[], meta?: Record<string, unknown> }>}
+ * CSV file — inbound read and outbound write.
+ * @param {{ config: Record<string, unknown>, secrets?: Record<string, unknown>, mode?: string, direction?: string, rows?: Record<string, unknown>[] }} ctx
  */
 export async function runCsvFile(ctx) {
+  if (isOutbound(ctx)) return exportCsvFile(ctx)
+  return importCsvFile(ctx)
+}
+
+/**
+ * @param {import('./csvFile.js').runCsvFile extends (ctx: infer C) => unknown ? C : never} ctx
+ */
+async function importCsvFile(ctx) {
   const config = ctx.config || {}
   const sourceMode = config.sourceMode || 'url'
   const delimiter = String(config.delimiter || ',')
@@ -31,5 +41,21 @@ export async function runCsvFile(ctx) {
   return {
     rows,
     meta: { count: rows.length, sourceMode },
+  }
+}
+
+/**
+ * @param {import('./csvFile.js').runCsvFile extends (ctx: infer C) => unknown ? C : never} ctx
+ */
+async function exportCsvFile(ctx) {
+  const config = ctx.config || {}
+  const rows = Array.isArray(ctx.rows) ? ctx.rows : []
+  const delimiter = String(config.delimiter || ',')
+  const content = rowsToCsv(rows, delimiter)
+  const delivery = await deliverFileContent(config, content, 'text/csv')
+  return {
+    rows: [],
+    rowsWritten: rows.length,
+    meta: { ...delivery, format: 'csv', rowCount: rows.length },
   }
 }

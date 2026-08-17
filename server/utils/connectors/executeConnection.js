@@ -9,19 +9,10 @@ import {
   normalizeRetentionDays,
 } from '~~/shared/systemSettings.js'
 import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
+import { mergeConnectorConfig } from './connectorConfig.js'
+import { deliverOutboundBatch } from './deliverOutbound.js'
 
-/**
- * Merge connection (shared) + data-source (endpoint) config.
- * Data-source keys win on conflict.
- * @param {Record<string, unknown>} connectionConfig
- * @param {Record<string, unknown>} sourceConfig
- */
-export function mergeConnectorConfig(connectionConfig, sourceConfig) {
-  return {
-    ...(connectionConfig && typeof connectionConfig === 'object' ? connectionConfig : {}),
-    ...(sourceConfig && typeof sourceConfig === 'object' ? sourceConfig : {}),
-  }
-}
+export { mergeConnectorConfig } from './connectorConfig.js'
 
 /**
  * Execute a data source in test or run mode.
@@ -181,6 +172,7 @@ export async function executeDataSource(opts) {
     let rowsWritten = 0
     let stagedWritten = 0
     let stagedReleased = 0
+    let outboundWritten = 0
     let expiredCleaned = 0
 
     if (mode === 'run') {
@@ -371,6 +363,15 @@ export async function executeDataSource(opts) {
             })
             stagedReleased += chunks[i].length
           }
+
+          const delivered = await deliverOutboundBatch(admin, {
+            exportConnectionId,
+            organizationId: dataSource.organization_id,
+            rows: chunks[i],
+            dataSourceConfig: dataSource.config,
+            mode,
+          })
+          outboundWritten += delivered.rowsWritten
         }
         if (dualSink) {
           await admin.rpc('staged_delete_run', { p_run_id: run.id })
@@ -383,6 +384,7 @@ export async function executeDataSource(opts) {
       written: rowsWritten,
       stagedWritten,
       stagedReleased,
+      outboundWritten,
       expiredCleaned,
     }
 

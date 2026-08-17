@@ -1,4 +1,5 @@
 import { getByPath, toRowArray } from '../helpers.js'
+import { isOutbound } from '~~/shared/runnerDirection.js'
 import {
   applyPathTemplate,
   extractPathVariables,
@@ -17,6 +18,8 @@ import {
  * }} ctx
  */
 export async function runRestGeneric(ctx) {
+  if (isOutbound(ctx)) return exportRestGeneric(ctx)
+
   const config = ctx.config || {}
   const secrets = ctx.secrets || {}
   const baseUrl = String(config.baseUrl || '').trim().replace(/\/$/, '')
@@ -339,4 +342,64 @@ function redactHeaders(headers) {
     }
   })
   return out
+}
+
+/**
+ * Outbound REST — POST/PUT JSON rows to an API endpoint.
+ * @param {{
+ *   config: Record<string, unknown>,
+ *   secrets?: Record<string, unknown>,
+ *   mode?: string,
+ *   rows?: Record<string, unknown>[],
+ * }} ctx
+ */
+async function exportRestGeneric(ctx) {
+  const config = ctx.config || {}
+  const secrets = ctx.secrets || {}
+  const rows = Array.isArray(ctx.rows) ? ctx.rows : []
+  const baseUrl = String(config.baseUrl || '').trim().replace(/\/$/, '')
+  const path = String(config.path ?? '/').trim()
+  const method = String(config.exportMethod || config.method || 'POST').toUpperCase()
+  const bodyMode = String(config.bodyMode || 'array').toLowerCase()
+  const authMode = normalizeAuthMode(config.authMode, secrets)
+
+  if (!baseUrl) {
+    throw createError({ statusCode: 400, statusMessage: 'baseUrl is required' })
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    throw createError({ statusCode: 400, statusMessage: 'baseUrl must be http(s)' })
+  }
+  if (!rows.length) {
+    return { rows: [], rowsWritten: 0, meta: { baseUrl, method, rowCount: 0 } }
+  }
+
+  const headers = { 'Content-Type': 'application/json' }
+  const apiKey = secrets.apiKey
+  if (authMode !== 'none' && apiKey) {
+    const headerName = String(config.authHeader || 'Authorization')
+    const prefix = String(config.authPrefix || 'Bearer').trim()
+    headers[headerName] = prefix ? `${prefix} ${apiKey}` : String(apiKey)
+  }
+
+  const url = joinUrl(baseUrl, path)
+  const limit = ctx.mode === 'test' ? Math.min(rows.length, 3) : rows.length
+  const payloadRows = rows.slice(0, limit)
+  let written = 0
+
+  if (bodyMode === 'row') {
+    for (const row of payloadRows) {
+      await $fetch(url, { method, headers, body: row })
+      written += 1
+    }
+  }
+  else {
+    await $fetch(url, { method, headers, body: payloadRows })
+    written = payloadRows.length
+  }
+
+  return {
+    rows: [],
+    rowsWritten: written,
+    meta: { baseUrl, path, method, bodyMode, rowCount: written },
+  }
 }
