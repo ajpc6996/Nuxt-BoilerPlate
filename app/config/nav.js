@@ -136,6 +136,12 @@ export const appNavGroups = [
         roles: ['platform'],
       },
       {
+        id: 'admin-connector-drivers',
+        label: 'Connector drivers',
+        to: '/administration/connector-drivers',
+        roles: ['platform'],
+      },
+      {
         id: 'admin-licence',
         label: 'Licence & usage',
         to: '/administration/licence',

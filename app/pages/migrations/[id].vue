@@ -81,39 +81,39 @@
       class="mt-8"
     >
       <!-- Setup -->
-      <section v-show="activeTab === 'setup'" class="flex max-w-2xl flex-col gap-4">
-        <div class="flex flex-col gap-1.5">
-          <label class="text-sm font-medium text-[var(--ink)]">Source connection (inbound)</label>
-          <select
-            v-model="form.sourceConnectionId"
-            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-          >
-            <option value="">— Select —</option>
-            <option
-              v-for="c in inboundConnections"
-              :key="c.id"
-              :value="c.id"
-            >
-              {{ c.name }}
-            </option>
-          </select>
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <label class="text-sm font-medium text-[var(--ink)]">Destination connection (outbound)</label>
-          <select
-            v-model="form.destinationConnectionId"
-            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
-          >
-            <option value="">— Select —</option>
-            <option
-              v-for="c in outboundConnections"
-              :key="c.id"
-              :value="c.id"
-            >
-              {{ c.name }}
-            </option>
-          </select>
-        </div>
+      <section v-show="activeTab === 'setup'" class="flex max-w-3xl flex-col gap-6">
+        <MigrationConnectionSetup
+          v-model="form.sourceConnectionId"
+          v-model:system-id="form.sourceSystemId"
+          title="Source system"
+          subtitle="Legacy or upstream system — data is retrieved via an inbound connection."
+          direction="inbound"
+          role="source"
+          :connections="connections"
+          :catalog="connectorCatalog"
+          :registered-runners="registeredRunners"
+          :organization-id="activeOrganization?.id || ''"
+          :inference-text="inferenceText"
+          :capability-status="capabilityStatus"
+          @connection-created="loadConnections"
+        />
+
+        <MigrationConnectionSetup
+          v-model="form.destinationConnectionId"
+          v-model:system-id="form.destinationSystemId"
+          title="Destination system"
+          subtitle="Target system — mapped rows export via an outbound connection (dual-sink)."
+          direction="outbound"
+          role="destination"
+          :connections="connections"
+          :catalog="connectorCatalog"
+          :registered-runners="registeredRunners"
+          :organization-id="activeOrganization?.id || ''"
+          :inference-text="inferenceText"
+          :capability-status="capabilityStatus"
+          @connection-created="loadConnections"
+        />
+
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium text-[var(--ink)]">Default run mode</label>
@@ -330,6 +330,8 @@
 </template>
 
 <script setup>
+import { getMigrationSystem, databaseLabel } from '~~/shared/migrationSystems.js'
+
 definePageMeta({
   layout: 'app',
   middleware: ['auth', 'admin'],
@@ -338,6 +340,7 @@ definePageMeta({
 const route = useRoute()
 const { activeOrganization } = useOrganization()
 const { confirm } = useAppConfirm()
+const authedFetch = useAuthedFetch()
 
 const projectId = computed(() => String(route.params.id || ''))
 
@@ -356,6 +359,8 @@ const project = ref(null)
 const stages = ref([])
 const runs = ref([])
 const connections = ref([])
+const connectorCatalog = ref([])
+const capabilityStatus = ref(null)
 
 const saving = ref(false)
 const proposing = ref(false)
@@ -365,8 +370,23 @@ const running = ref(false)
 const form = reactive({
   sourceConnectionId: '',
   destinationConnectionId: '',
+  sourceSystemId: 'custom',
+  destinationSystemId: 'custom',
   defaultRunMode: 'sample',
   sampleLimit: 25,
+})
+
+const inferenceText = computed(() => {
+  const parts = [project.value?.name, project.value?.description].filter(Boolean)
+  return parts.join(' ')
+})
+
+const registeredRunners = computed(() => {
+  const operational = (capabilityStatus.value?.drivers || [])
+    .filter((d) => d.operational)
+    .map((d) => d.key)
+  const builtIn = capabilityStatus.value?.builtInRunners || ['rest_generic', 'csv_file', 'json_file']
+  return [...new Set([...builtIn, ...operational])]
 })
 
 const planNotes = computed(() => {
@@ -375,12 +395,20 @@ const planNotes = computed(() => {
   return cfg.aiNotes || cfg.sourceSummary || ''
 })
 
-const inboundConnections = computed(() =>
-  connections.value.filter((c) => c.direction === 'inbound'),
-)
-const outboundConnections = computed(() =>
-  connections.value.filter((c) => c.direction === 'outbound'),
-)
+function buildPlanConfigPatch() {
+  const existing = project.value?.plan_config && typeof project.value.plan_config === 'object'
+    ? project.value.plan_config
+    : {}
+  const source = getMigrationSystem(form.sourceSystemId)
+  const dest = getMigrationSystem(form.destinationSystemId)
+  return {
+    ...existing,
+    sourceSystemId: form.sourceSystemId,
+    destinationSystemId: form.destinationSystemId,
+    sourceSummary: `${source.label} (${databaseLabel(source.database)})`,
+    destinationSummary: `${dest.label} (${databaseLabel(dest.database)})`,
+  }
+}
 const transformStages = computed(() =>
   stages.value.filter((s) => s.stage_type === 'transform'),
 )
@@ -408,13 +436,25 @@ const formatDate = (value) => {
 const loadConnections = async () => {
   if (!activeOrganization.value?.id) return
   try {
-    const res = await $fetch('/api/connections', {
-      query: { organizationId: activeOrganization.value.id },
-    })
-    connections.value = res.items || []
+    const [connRes, catalogRes, capRes] = await Promise.all([
+      authedFetch('/api/connections', {
+        query: { organizationId: activeOrganization.value.id },
+      }),
+      authedFetch('/api/connector-types/catalog', {
+        query: { organizationId: activeOrganization.value.id },
+      }),
+      authedFetch('/api/connector-capabilities/status', {
+        query: { organizationId: activeOrganization.value.id },
+      }),
+    ])
+    connections.value = connRes.items || []
+    connectorCatalog.value = catalogRes.items || []
+    capabilityStatus.value = capRes
   }
   catch {
     connections.value = []
+    connectorCatalog.value = []
+    capabilityStatus.value = null
   }
 }
 
@@ -423,7 +463,7 @@ const load = async () => {
   pending.value = true
   error.value = ''
   try {
-    const res = await $fetch(`/api/migrations/${projectId.value}`, {
+    const res = await authedFetch(`/api/migrations/${projectId.value}`, {
       query: { organizationId: activeOrganization.value.id },
     })
     project.value = res.item
@@ -433,6 +473,11 @@ const load = async () => {
     form.destinationConnectionId = res.item.destination_connection_id || ''
     form.defaultRunMode = res.item.default_run_mode || 'sample'
     form.sampleLimit = res.item.sample_limit || 25
+    const cfg = res.item.plan_config && typeof res.item.plan_config === 'object'
+      ? res.item.plan_config
+      : {}
+    form.sourceSystemId = cfg.sourceSystemId || 'custom'
+    form.destinationSystemId = cfg.destinationSystemId || 'custom'
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Load failed'
@@ -455,7 +500,7 @@ const saveProject = async () => {
   error.value = ''
   notice.value = ''
   try {
-    const res = await $fetch(`/api/migrations/${projectId.value}`, {
+    const res = await authedFetch(`/api/migrations/${projectId.value}`, {
       method: 'PUT',
       body: {
         organizationId: activeOrganization.value.id,
@@ -463,6 +508,7 @@ const saveProject = async () => {
         destinationConnectionId: form.destinationConnectionId || null,
         defaultRunMode: form.defaultRunMode,
         sampleLimit: form.sampleLimit,
+        planConfig: buildPlanConfigPatch(),
       },
     })
     project.value = res.item
@@ -483,7 +529,7 @@ const proposePlan = async () => {
   notice.value = ''
   try {
     await saveProject()
-    const res = await $fetch(`/api/migrations/${projectId.value}/apply-plan`, {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/apply-plan`, {
       method: 'POST',
       body: { organizationId: activeOrganization.value.id },
     })
@@ -507,7 +553,7 @@ const materialize = async () => {
   notice.value = ''
   try {
     await saveProject()
-    await $fetch(`/api/migrations/${projectId.value}/materialize`, {
+    await authedFetch(`/api/migrations/${projectId.value}/materialize`, {
       method: 'POST',
       body: { organizationId: activeOrganization.value.id },
     })
@@ -530,7 +576,7 @@ const saveStage = async (stage) => {
   if (!activeOrganization.value?.id) return
   error.value = ''
   try {
-    const res = await $fetch(`/api/migrations/${projectId.value}/stages/${stage.id}`, {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/stages/${stage.id}`, {
       method: 'PUT',
       body: {
         organizationId: activeOrganization.value.id,
@@ -552,7 +598,7 @@ const runMigration = async (runMode) => {
   error.value = ''
   notice.value = ''
   try {
-    const res = await $fetch(`/api/migrations/${projectId.value}/run`, {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/run`, {
       method: 'POST',
       body: {
         organizationId: activeOrganization.value.id,

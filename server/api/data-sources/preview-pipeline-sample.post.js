@@ -96,7 +96,7 @@ export default defineEventHandler(async (event) => {
     }
 
     const mergedConfig = mergeConnectorConfig(connection.config, config)
-    const runner = getConnectorRunner(type.runner_key)
+    const runner = await getConnectorRunner(type.runner_key, admin)
     const result = await runner({
       config: mergedConfig,
       secrets,

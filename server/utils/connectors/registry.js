@@ -1,28 +1,62 @@
 import { runJsonFile } from './runners/jsonFile.js'
 import { runCsvFile } from './runners/csvFile.js'
 import { runRestGeneric } from './runners/restGeneric.js'
+import { runMysql } from './runners/mysql.js'
+import { runPostgres } from './runners/postgres.js'
+import {
+  isRunnerOperational,
+  loadEnabledRunnersMap,
+} from './capabilities.js'
 
-/** @type {Record<string, (ctx: { config: Record<string, unknown>, secrets?: Record<string, unknown>, mode?: string }) => Promise<{ rows: Record<string, unknown>[], meta?: Record<string, unknown> }>>} */
-const runners = {
+/** @type {Record<string, (ctx: { config: Record<string, unknown>, secrets?: Record<string, unknown>, mode?: string, organizationId?: string }) => Promise<{ rows: Record<string, unknown>[], meta?: Record<string, unknown> }>>} */
+const builtInRunners = {
   json_file: runJsonFile,
   csv_file: runCsvFile,
   rest_generic: runRestGeneric,
 }
 
-/**
- * @param {string} runnerKey
- */
-export function getConnectorRunner(runnerKey) {
-  const runner = runners[runnerKey]
-  if (!runner) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: `No runner registered for key: ${runnerKey}`,
-    })
-  }
-  return runner
+/** @type {Record<string, (ctx: unknown) => Promise<{ rows: Record<string, unknown>[], meta?: Record<string, unknown> }>>} */
+const optionalRunners = {
+  mysql: runMysql,
+  postgres: runPostgres,
 }
 
-export function listRegisteredRunnerKeys() {
-  return Object.keys(runners)
+/**
+ * @param {string} runnerKey
+ * @param {import('@supabase/supabase-js').SupabaseClient} [admin]
+ */
+export async function getConnectorRunner(runnerKey, admin) {
+  const key = String(runnerKey || '').trim()
+  if (builtInRunners[key]) {
+    return builtInRunners[key]
+  }
+
+  const enabledMap = await loadEnabledRunnersMap(admin)
+  const operational = await isRunnerOperational(key, enabledMap)
+  if (!operational || !optionalRunners[key]) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Connector runner "${key}" is not available. Install and enable it under Administration → Connector drivers.`,
+    })
+  }
+
+  return optionalRunners[key]
+}
+
+/**
+ * @param {import('@supabase/supabase-js').SupabaseClient} [admin]
+ */
+export async function listRegisteredRunnerKeys(admin) {
+  const enabledMap = await loadEnabledRunnersMap(admin)
+  const keys = Object.keys(builtInRunners)
+  for (const key of Object.keys(optionalRunners)) {
+    if (await isRunnerOperational(key, enabledMap)) {
+      keys.push(key)
+    }
+  }
+  return keys
+}
+
+export function listBuiltInRunnerKeys() {
+  return Object.keys(builtInRunners)
 }

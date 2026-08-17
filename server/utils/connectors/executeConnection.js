@@ -152,7 +152,7 @@ export async function executeDataSource(opts) {
       resultMeta = { kind: 'merge', fetchCount: Object.keys(seedOutputs).length }
     }
     else {
-      const runner = getConnectorRunner(type.runner_key)
+      const runner = await getConnectorRunner(type.runner_key, admin)
       const result = await runner({
         config: mergedConfig,
         secrets,

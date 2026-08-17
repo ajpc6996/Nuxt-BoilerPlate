@@ -145,6 +145,7 @@ useHead({ title: 'Migrations' })
 
 const { activeOrganization } = useOrganization()
 const router = useRouter()
+const authedFetch = useAuthedFetch()
 
 const listFilter = ref('')
 const error = ref('')
@@ -177,7 +178,7 @@ const load = async () => {
   pending.value = true
   error.value = ''
   try {
-    const res = await $fetch('/api/migrations', {
+    const res = await authedFetch('/api/migrations', {
       query: { organizationId: activeOrganization.value.id },
     })
     items.value = res.items || []
@@ -203,7 +204,7 @@ const createProject = async () => {
   creating.value = true
   error.value = ''
   try {
-    const res = await $fetch('/api/migrations', {
+    const res = await authedFetch('/api/migrations', {
       method: 'POST',
       body: {
         organizationId: activeOrganization.value.id,

@@ -108,6 +108,8 @@ export function normalizeMigrationStage(raw) {
 export function normalizePlanConfig(raw) {
   const plan = raw && typeof raw === 'object' ? raw : {}
   return {
+    sourceSystemId: String(plan.sourceSystemId || '').trim(),
+    destinationSystemId: String(plan.destinationSystemId || '').trim(),
     sourceSummary: String(plan.sourceSummary || '').trim(),
     destinationSummary: String(plan.destinationSummary || '').trim(),
     aiNotes: String(plan.aiNotes || '').trim(),
