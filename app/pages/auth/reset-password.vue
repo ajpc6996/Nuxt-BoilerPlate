@@ -7,6 +7,12 @@
       <p class="mt-2 text-sm text-[var(--mute)]">
         Choose a strong password. It is stored with one-way hashing and cannot be viewed by anyone.
       </p>
+      <p
+        v-if="mfaNeeded"
+        class="mt-3 rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--ink)]"
+      >
+        MFA is enabled on this account. Enter an authenticator code to step up this recovery session, then set the new password.
+      </p>
 
       <div v-if="bootstrapping" class="mt-8 text-sm text-[var(--mute)]">
         Verifying your reset link…
@@ -29,6 +35,31 @@
         class="mt-8 flex flex-col gap-4"
         @submit.prevent="onSubmit"
       >
+        <div
+          v-if="mfaNeeded"
+          class="flex flex-col gap-1.5"
+        >
+          <label
+            for="mfa-code"
+            class="text-sm font-medium text-[var(--ink)]"
+          >Authenticator code</label>
+          <input
+            id="mfa-code"
+            v-model="mfaCode"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="10"
+            required
+            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm tracking-widest text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+          >
+          <p
+            v-if="!factorId"
+            class="text-xs text-[var(--danger)]"
+          >
+            No verified authenticator is enrolled. An admin can set a temporary password, or enroll MFA after signing in.
+          </p>
+        </div>
+
         <div class="flex flex-col gap-1.5">
           <label for="password" class="text-sm font-medium text-[var(--ink)]">New password</label>
           <input
@@ -79,6 +110,10 @@ const route = useRoute()
 
 const password = ref('')
 const confirm = ref('')
+const mfaCode = ref('')
+const mfaNeeded = ref(false)
+const factorId = ref('')
+const challengeId = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 const submitting = ref(false)
@@ -197,6 +232,88 @@ const establishRecoverySession = async () => {
     window.history.replaceState({}, '', '/auth/reset-password')
   }
 
+  await prepareMfaStepUp()
+  return true
+}
+
+/**
+ * Recovery sessions are aal1. Supabase requires aal2 to change password when MFA is enrolled.
+ */
+const prepareMfaStepUp = async () => {
+  mfaNeeded.value = false
+  factorId.value = ''
+  challengeId.value = ''
+
+  const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (aalError) {
+    errorMessage.value = aalError.message
+    return
+  }
+
+  const current = aalData?.currentLevel || 'aal1'
+  const next = aalData?.nextLevel || current
+  if (current === 'aal2' || next !== 'aal2') return
+
+  mfaNeeded.value = true
+  authStore.setAssuranceLevels({ currentLevel: current, nextLevel: next })
+
+  const { data: factors, error: factorError } = await supabase.auth.mfa.listFactors()
+  if (factorError) {
+    errorMessage.value = factorError.message
+    return
+  }
+
+  const totp = (factors?.totp || []).find((f) => f.status === 'verified')
+  factorId.value = totp?.id || ''
+  if (!factorId.value) return
+
+  const challenge = await supabase.auth.mfa.challenge({ factorId: factorId.value })
+  if (challenge.error) {
+    errorMessage.value = challenge.error.message
+    return
+  }
+  challengeId.value = challenge.data.id
+}
+
+const stepUpMfa = async () => {
+  if (!mfaNeeded.value) return true
+  if (!factorId.value) {
+    errorMessage.value = 'MFA is enabled but no authenticator is enrolled. Ask an admin to reset your password.'
+    return false
+  }
+
+  const code = mfaCode.value.trim()
+  if (!code) {
+    errorMessage.value = 'Enter your authenticator code to continue'
+    return false
+  }
+
+  if (!challengeId.value) {
+    const challenge = await supabase.auth.mfa.challenge({ factorId: factorId.value })
+    if (challenge.error) {
+      errorMessage.value = challenge.error.message
+      return false
+    }
+    challengeId.value = challenge.data.id
+  }
+
+  const { error } = await supabase.auth.mfa.verify({
+    factorId: factorId.value,
+    challengeId: challengeId.value,
+    code,
+  })
+  if (error) {
+    errorMessage.value = error.message
+    challengeId.value = ''
+    return false
+  }
+
+  const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+  authStore.setAssuranceLevels({
+    currentLevel: aalData?.currentLevel || 'aal2',
+    nextLevel: aalData?.nextLevel || 'aal2',
+  })
+  mfaNeeded.value = false
   return true
 }
 
@@ -242,9 +359,17 @@ const onSubmit = async () => {
 
   submitting.value = true
   try {
+    const steppedUp = await stepUpMfa()
+    if (!steppedUp) return
+
     const { error } = await supabase.auth.updateUser({ password: password.value })
     if (error) {
       errorMessage.value = error.message
+      if (/AAL2/i.test(error.message || '')) {
+        mfaNeeded.value = true
+        await prepareMfaStepUp()
+        errorMessage.value = 'Authenticator verification is required before the password can be changed. Enter a current code and try again.'
+      }
       return
     }
     successMessage.value = 'Password updated. You can sign in now.'
