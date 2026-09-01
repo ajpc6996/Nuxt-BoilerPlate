@@ -25,18 +25,18 @@
         <button
           type="button"
           class="btn-secondary !px-3 !py-2 text-sm"
-          :disabled="saving"
+          :disabled="pageBusy"
           @click="saveProject"
         >
-          Save
+          {{ saving ? 'Saving…' : 'Save' }}
         </button>
         <button
           type="button"
           class="btn-primary !px-3 !py-2 text-sm"
-          :disabled="materializing"
+          :disabled="pageBusy"
           @click="materialize"
         >
-          Materialize flows
+          {{ materializing ? 'Materializing…' : 'Materialize flows' }}
         </button>
       </div>
     </div>
@@ -50,10 +50,26 @@
         :class="activeTab === tab.id
           ? 'bg-[var(--accent-soft)] text-[var(--accent-ink)]'
           : 'text-[var(--mute)] hover:text-[var(--ink)]'"
+        :disabled="pageBusy"
         @click="activeTab = tab.id"
       >
         {{ tab.label }}
       </button>
+    </div>
+
+    <div
+      v-if="busyMessage"
+      class="sticky top-0 z-30 mt-6 flex items-center gap-3 rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink)] shadow-lg"
+      role="status"
+      aria-live="assertive"
+      aria-busy="true"
+    >
+      <span
+        class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+        aria-hidden="true"
+      />
+      <span class="font-medium">{{ busyMessage }}</span>
+      <span class="ml-auto text-xs text-[var(--mute)]">Please wait — actions are locked</span>
     </div>
 
     <p
@@ -63,7 +79,7 @@
       {{ error }}
     </p>
     <p
-      v-if="notice"
+      v-if="notice && !busyMessage"
       class="panel mt-6 border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--ink)]"
     >
       {{ notice }}
@@ -79,6 +95,8 @@
     <div
       v-else-if="project"
       class="mt-8"
+      :class="pageBusy ? 'pointer-events-none opacity-60' : ''"
+      :aria-busy="pageBusy ? 'true' : undefined"
     >
       <!-- Setup -->
       <section v-show="activeTab === 'setup'" class="flex max-w-3xl flex-col gap-6">
@@ -147,12 +165,13 @@
           </h2>
           <p class="mt-1 text-sm text-[var(--mute)]">
             Proposes extract → transform (dual-sink) → validate stages per entity.
+            You will be asked for extra guidance and documentation links before generation.
           </p>
           <button
             type="button"
             class="btn-primary mt-4 !px-4 !py-2 text-sm"
-            :disabled="proposing"
-            @click="proposePlan"
+            :disabled="pageBusy"
+            @click="openProposeDialog"
           >
             {{ proposing ? 'Generating…' : 'Generate plan with AI' }}
           </button>
@@ -162,6 +181,40 @@
           >
             {{ planNotes }}
           </p>
+          <details
+            v-if="constraintChecklist.length"
+            class="mt-4 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-3"
+          >
+            <summary class="cursor-pointer text-sm font-semibold text-[var(--ink)]">
+              Destination constraint checklist
+              <span class="ml-2 font-normal text-[var(--mute)]">
+                ({{ constraintChecklist.length }})
+              </span>
+            </summary>
+            <ul class="mt-2 space-y-3 text-xs text-[var(--mute)]">
+              <li
+                v-for="(item, idx) in constraintChecklist"
+                :key="`${item.entityKey}-${idx}`"
+              >
+                <div class="font-mono text-[var(--accent-ink)]">
+                  {{ item.entityKey || 'entity' }}
+                  <span v-if="item.destinationTable">→ {{ item.destinationTable }}</span>
+                </div>
+                <div v-if="item.requiredColumns?.length">
+                  Required: {{ item.requiredColumns.join(', ') }}
+                </div>
+                <div v-if="item.mitigations?.length">
+                  Mitigations: {{ item.mitigations.join('; ') }}
+                </div>
+                <div
+                  v-if="item.residualRisks?.length"
+                  class="text-[var(--danger)]"
+                >
+                  Residual risks: {{ item.residualRisks.join('; ') }}
+                </div>
+              </li>
+            </ul>
+          </details>
         </div>
 
         <div class="overflow-x-auto">
@@ -228,7 +281,7 @@
           :key="stage.id"
           class="panel px-4 py-4"
         >
-          <details open>
+          <details>
             <summary class="cursor-pointer font-display text-lg font-semibold text-[var(--ink)]">
               {{ stage.name }}
               <span class="ml-2 font-mono text-xs font-normal text-[var(--accent-ink)]">
@@ -240,14 +293,17 @@
                 :model-value="stage.config?.fieldMappings || []"
                 :source-fields="entitySourceFields(stage.entity_key)"
                 :destination-fields="entityDestFields(stage.entity_key)"
+                :destination-system-id="destinationSystemId"
+                :entity-key="stage.entity_key"
                 @update:model-value="(val) => updateStageMappings(stage, val)"
               />
               <button
                 type="button"
                 class="btn-secondary mt-4 !px-3 !py-1.5 text-xs"
+                :disabled="pageBusy"
                 @click="saveStage(stage)"
               >
-                Save mappings
+                {{ savingStageId === stage.id ? 'Saving mappings…' : 'Save mappings' }}
               </button>
             </div>
           </details>
@@ -273,26 +329,26 @@
             <button
               type="button"
               class="btn-secondary !px-4 !py-2 text-sm"
-              :disabled="running"
+              :disabled="pageBusy"
               @click="runMigration('sample')"
             >
-              Sample run
+              {{ runningMode === 'sample' ? 'Sample running…' : 'Sample run' }}
             </button>
             <button
               type="button"
               class="btn-secondary !px-4 !py-2 text-sm"
-              :disabled="running"
+              :disabled="pageBusy"
               @click="runMigration('pilot')"
             >
-              Pilot run
+              {{ runningMode === 'pilot' ? 'Pilot running…' : 'Pilot run' }}
             </button>
             <button
               type="button"
               class="btn-primary !px-4 !py-2 text-sm"
-              :disabled="running"
+              :disabled="pageBusy"
               @click="confirmFullRun"
             >
-              Full run
+              {{ runningMode === 'full' ? 'Full run in progress…' : 'Full run' }}
             </button>
           </div>
         </div>
@@ -307,24 +363,204 @@
                 <th class="px-3 py-2">Started</th>
                 <th class="px-3 py-2">Mode</th>
                 <th class="px-3 py-2">Status</th>
-                <th class="px-3 py-2">Error</th>
+                <th class="px-3 py-2">Result</th>
               </tr>
             </thead>
             <tbody>
-              <tr
+              <template
                 v-for="run in runs"
                 :key="run.id"
-                class="border-b border-[var(--border-soft)]"
               >
-                <td class="px-3 py-2 text-[var(--mute)]">{{ formatDate(run.started_at) }}</td>
-                <td class="px-3 py-2">{{ run.run_mode }}</td>
-                <td class="px-3 py-2">{{ run.status }}</td>
-                <td class="px-3 py-2 text-[var(--danger)]">{{ run.last_error || '—' }}</td>
-              </tr>
+                <tr class="border-b border-[var(--border-soft)]">
+                  <td class="px-3 py-2 text-[var(--mute)]">{{ formatDate(run.started_at) }}</td>
+                  <td class="px-3 py-2">{{ run.run_mode }}</td>
+                  <td class="px-3 py-2">{{ run.status }}</td>
+                  <td class="px-3 py-2">
+                    <div class="flex items-start gap-2">
+                      <span
+                        class="min-w-0 flex-1"
+                        :class="run.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--mute)]'"
+                      >
+                        {{ runSummary(run) }}
+                      </span>
+                      <button
+                        type="button"
+                        class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--border)] text-xs font-semibold text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)]"
+                        :aria-expanded="expandedRunId === run.id"
+                        :aria-label="expandedRunId === run.id ? 'Hide run details' : 'Show run details'"
+                        :title="expandedRunId === run.id ? 'Hide details' : 'More info'"
+                        @click="toggleRunDetails(run.id)"
+                      >
+                        i
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  v-if="expandedRunId === run.id"
+                  class="border-b border-[var(--border-soft)] bg-[var(--surface)]"
+                >
+                  <td
+                    colspan="4"
+                    class="px-3 py-3"
+                  >
+                    <div class="space-y-3 text-xs">
+                      <p
+                        v-if="run.last_error"
+                        class="text-[var(--danger)]"
+                      >
+                        {{ run.last_error }}
+                      </p>
+                      <div
+                        v-for="(sr, sIdx) in runStageResults(run)"
+                        :key="`${run.id}-${sIdx}`"
+                        class="rounded-md border border-[var(--border)] px-3 py-2"
+                        :class="sr.ok === false ? 'border-[var(--danger)]' : ''"
+                      >
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <div class="font-medium text-[var(--ink)]">
+                            {{ sr.stageName || `Stage ${sIdx + 1}` }}
+                            <span class="ml-2 font-mono text-[var(--mute)]">{{ sr.stageType }}</span>
+                            <span
+                              v-if="sr.entityKey"
+                              class="ml-2 font-mono text-[var(--accent-ink)]"
+                            >{{ sr.entityKey }}</span>
+                          </div>
+                          <span :class="sr.ok === false ? 'text-[var(--danger)]' : 'text-emerald-300'">
+                            {{ sr.ok === false ? 'Failed' : 'OK' }}
+                          </span>
+                        </div>
+                        <p
+                          v-if="sr.error"
+                          class="mt-1 text-[var(--danger)]"
+                        >
+                          {{ sr.error }}
+                        </p>
+                        <p
+                          v-if="sr.hint"
+                          class="mt-1 text-[var(--mute)]"
+                        >
+                          {{ sr.hint }}
+                        </p>
+                        <p
+                          v-if="sr.ok !== false"
+                          class="mt-1 text-[var(--mute)]"
+                        >
+                          fetched {{ sr.rowsFetched ?? '—' }}
+                          · after pipeline {{ sr.rowsAfterPipeline ?? '—' }}
+                          · wrote {{ sr.rowsWritten ?? 0 }}
+                          · outbound {{ sr.outboundWritten ?? 0 }}
+                        </p>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                          <NuxtLink
+                            v-if="sr.dataSourceId"
+                            :to="`/data-sources/sources?edit=${sr.dataSourceId}`"
+                            class="text-[var(--accent-ink)] hover:underline"
+                          >
+                            Open data flow
+                          </NuxtLink>
+                          <button
+                            v-if="sr.entityKey"
+                            type="button"
+                            class="text-[var(--accent-ink)] hover:underline"
+                            @click="openMappingForEntity(sr.entityKey)"
+                          >
+                            Edit mappings
+                          </button>
+                        </div>
+                      </div>
+                      <p
+                        v-if="!runStageResults(run).length"
+                        class="text-[var(--mute)]"
+                      >
+                        No stage detail recorded for this run.
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
       </section>
+    </div>
+
+    <div
+      v-if="proposeDialogOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--modal-scrim)] p-4"
+      @click.self="!proposing && (proposeDialogOpen = false)"
+    >
+      <form
+        class="panel max-h-[90vh] w-full max-w-xl overflow-y-auto px-6 py-5"
+        @submit.prevent="proposePlan"
+      >
+        <h2 class="font-display text-xl font-semibold text-[var(--ink)]">
+          Generate plan with AI
+        </h2>
+        <p class="mt-1 text-sm text-[var(--mute)]">
+          Add operator guidance and documentation links the model should treat as authoritative
+          (schema docs, API references, internal runbooks).
+        </p>
+
+        <div
+          v-if="proposing"
+          class="mt-4 flex items-center gap-3 rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-3 text-sm text-[var(--ink)]"
+          role="status"
+          aria-live="assertive"
+        >
+          <span
+            class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+            aria-hidden="true"
+          />
+          <span class="font-medium">Generating AI migration plan… This can take a while.</span>
+        </div>
+
+        <div class="mt-4 flex flex-col gap-1.5">
+          <label class="text-sm font-medium text-[var(--ink)]">Additional guidance</label>
+          <textarea
+            v-model="proposeForm.operatorNotes"
+            rows="5"
+            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+            placeholder="e.g. Zammad admin user id is 2; only migrate active RT users; tickets after 2024-01-01; preserve RT Queue names as Zammad Groups…"
+            :disabled="proposing"
+          />
+          <p class="text-xs text-[var(--mute-soft)]">
+            Combined with the project description. Include constraints, exclusions, and known IDs.
+          </p>
+        </div>
+
+        <div class="mt-4 flex flex-col gap-1.5">
+          <label class="text-sm font-medium text-[var(--ink)]">Documentation links</label>
+          <textarea
+            v-model="proposeForm.docsUrlsText"
+            rows="4"
+            class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm text-[var(--ink)]"
+            placeholder="https://docs.zammad.org/...&#10;https://docs.bestpractical.com/rt/...&#10;(one URL per line)"
+            :disabled="proposing"
+          />
+          <p class="text-xs text-[var(--mute-soft)]">
+            One http(s) URL per line. Official schema/API docs work best.
+          </p>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            class="btn-secondary !px-4 !py-2"
+            :disabled="proposing"
+            @click="proposeDialogOpen = false"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="btn-primary !px-4 !py-2"
+            :disabled="proposing"
+          >
+            {{ proposing ? 'Generating plan…' : 'Generate plan' }}
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 </template>
@@ -366,6 +602,53 @@ const saving = ref(false)
 const proposing = ref(false)
 const materializing = ref(false)
 const running = ref(false)
+const runningMode = ref('')
+const savingStageId = ref('')
+const expandedRunId = ref(null)
+const proposeDialogOpen = ref(false)
+const proposeForm = reactive({
+  operatorNotes: '',
+  docsUrlsText: '',
+})
+
+const pageBusy = computed(() =>
+  Boolean(
+    saving.value
+    || proposing.value
+    || materializing.value
+    || running.value
+    || savingStageId.value,
+  ),
+)
+
+const busyMessage = computed(() => {
+  if (proposing.value) return 'Generating AI migration plan… This can take a while.'
+  if (materializing.value) return 'Materializing data flows from stages…'
+  if (runningMode.value === 'sample') return 'Sample run in progress…'
+  if (runningMode.value === 'pilot') return 'Pilot run in progress…'
+  if (runningMode.value === 'full') return 'Full migration run in progress…'
+  if (running.value) return 'Migration run in progress…'
+  if (saving.value) return 'Saving project…'
+  if (savingStageId.value) return 'Saving field mappings…'
+  return ''
+})
+
+/**
+ * Flip busy UI immediately, then yield until the browser paints the spinner
+ * before starting the network call (avoids a “dead” UI during long requests).
+ * @param {() => void} setBusy
+ */
+async function beginBusy(setBusy) {
+  error.value = ''
+  notice.value = ''
+  setBusy()
+  await nextTick()
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve)
+    })
+  })
+}
 
 const form = reactive({
   sourceConnectionId: '',
@@ -395,6 +678,11 @@ const planNotes = computed(() => {
   return cfg.aiNotes || cfg.sourceSummary || ''
 })
 
+const constraintChecklist = computed(() => {
+  const cfg = project.value?.plan_config
+  return Array.isArray(cfg?.constraintChecklist) ? cfg.constraintChecklist : []
+})
+
 function buildPlanConfigPatch() {
   const existing = project.value?.plan_config && typeof project.value.plan_config === 'object'
     ? project.value.plan_config
@@ -418,6 +706,11 @@ const entitiesCatalog = computed(() => {
   return Array.isArray(cfg?.entities) ? cfg.entities : []
 })
 
+const destinationSystemId = computed(() => {
+  const cfg = project.value?.plan_config
+  return String(cfg?.destinationSystemId || form.destinationSystemId || '').trim()
+})
+
 const entitySourceFields = (entityKey) => {
   const ent = entitiesCatalog.value.find((e) => e.key === entityKey)
   return ent?.sourceFields || []
@@ -431,6 +724,44 @@ const entityDestFields = (entityKey) => {
 const formatDate = (value) => {
   if (!value) return '—'
   return new Date(value).toLocaleString()
+}
+
+/**
+ * @param {Record<string, unknown>} run
+ */
+function runStageResults(run) {
+  return Array.isArray(run?.stage_results) ? run.stage_results : []
+}
+
+/**
+ * @param {Record<string, unknown>} run
+ */
+function runSummary(run) {
+  if (run?.last_error) return run.last_error
+  const results = runStageResults(run)
+  if (!results.length) return run?.status === 'completed' ? 'Completed' : '—'
+  const failed = results.find((r) => r && r.ok === false)
+  if (failed) {
+    return `Failed on “${failed.stageName || 'stage'}”${failed.entityKey ? ` (${failed.entityKey})` : ''}`
+  }
+  return `Completed · ${results.length} stage${results.length === 1 ? '' : 's'}`
+}
+
+/**
+ * @param {string} runId
+ */
+function toggleRunDetails(runId) {
+  expandedRunId.value = expandedRunId.value === runId ? null : runId
+}
+
+/**
+ * @param {string} entityKey
+ */
+function openMappingForEntity(entityKey) {
+  activeTab.value = 'mapping'
+  notice.value = entityKey
+    ? `Review mappings for entity “${entityKey}”, then rematerialize before retrying.`
+    : 'Review mappings, then rematerialize before retrying.'
 }
 
 const loadConnections = async () => {
@@ -494,11 +825,14 @@ watch([() => activeOrganization.value?.id, projectId], () => {
 
 useHead(() => ({ title: project.value?.name ? `${project.value.name} · Migration` : 'Migration' }))
 
-const saveProject = async () => {
+const saveProject = async (opts = {}) => {
   if (!activeOrganization.value?.id) return
-  saving.value = true
-  error.value = ''
-  notice.value = ''
+  const quiet = Boolean(opts.quiet)
+  if (!quiet) {
+    await beginBusy(() => {
+      saving.value = true
+    })
+  }
   try {
     const res = await authedFetch(`/api/migrations/${projectId.value}`, {
       method: 'PUT',
@@ -512,30 +846,45 @@ const saveProject = async () => {
       },
     })
     project.value = res.item
-    notice.value = 'Project saved.'
+    if (!quiet) notice.value = 'Project saved.'
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Save failed'
+    if (quiet) throw err
   }
   finally {
-    saving.value = false
+    if (!quiet) saving.value = false
   }
 }
 
 const proposePlan = async () => {
-  if (!activeOrganization.value?.id) return
-  proposing.value = true
-  error.value = ''
-  notice.value = ''
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    proposing.value = true
+  })
   try {
-    await saveProject()
+    await saveProject({ quiet: true })
+    const docsUrls = String(proposeForm.docsUrlsText || '')
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter((u) => /^https?:\/\//i.test(u))
+    const operatorNotes = String(proposeForm.operatorNotes || '').trim()
     const res = await authedFetch(`/api/migrations/${projectId.value}/apply-plan`, {
       method: 'POST',
-      body: { organizationId: activeOrganization.value.id },
+      body: {
+        organizationId: activeOrganization.value.id,
+        sourceSystemId: form.sourceSystemId,
+        destinationSystemId: form.destinationSystemId,
+        sourceSummary: `${getMigrationSystem(form.sourceSystemId).label} (${databaseLabel(getMigrationSystem(form.sourceSystemId).database)})`,
+        destinationSummary: `${getMigrationSystem(form.destinationSystemId).label} (${databaseLabel(getMigrationSystem(form.destinationSystemId).database)})`,
+        operatorNotes,
+        docsUrls,
+      },
     })
     project.value = res.item
     stages.value = res.stages || []
-    notice.value = 'AI plan applied. Review stages and mappings, then materialize.'
+    proposeDialogOpen.value = false
+    notice.value = 'AI plan applied. Review constraint checklist, stages, and mappings, then materialize.'
     activeTab.value = 'plan'
   }
   catch (err) {
@@ -546,13 +895,35 @@ const proposePlan = async () => {
   }
 }
 
+/**
+ * Open the AI plan dialog, prefilled from previous generation when available.
+ */
+function openProposeDialog() {
+  const cfg = project.value?.plan_config && typeof project.value.plan_config === 'object'
+    ? project.value.plan_config
+    : {}
+  proposeForm.operatorNotes = String(cfg.operatorNotes || '').trim()
+  const docs = Array.isArray(cfg.docsUrls) ? cfg.docsUrls : []
+  proposeForm.docsUrlsText = docs.join('\n')
+  if (!proposeForm.operatorNotes && !proposeForm.docsUrlsText) {
+    // Sensible starter hints for RT → Zammad
+    if (form.sourceSystemId === 'rt' && form.destinationSystemId === 'zammad') {
+      proposeForm.docsUrlsText = [
+        'https://docs.zammad.org/en/latest/',
+        'https://docs.bestpractical.com/rt/latest/index.html',
+      ].join('\n')
+    }
+  }
+  proposeDialogOpen.value = true
+}
+
 const materialize = async () => {
-  if (!activeOrganization.value?.id) return
-  materializing.value = true
-  error.value = ''
-  notice.value = ''
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    materializing.value = true
+  })
   try {
-    await saveProject()
+    await saveProject({ quiet: true })
     await authedFetch(`/api/migrations/${projectId.value}/materialize`, {
       method: 'POST',
       body: { organizationId: activeOrganization.value.id },
@@ -573,8 +944,10 @@ const updateStageMappings = (stage, mappings) => {
 }
 
 const saveStage = async (stage) => {
-  if (!activeOrganization.value?.id) return
-  error.value = ''
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    savingStageId.value = stage.id
+  })
   try {
     const res = await authedFetch(`/api/migrations/${projectId.value}/stages/${stage.id}`, {
       method: 'PUT',
@@ -590,13 +963,17 @@ const saveStage = async (stage) => {
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Save stage failed'
   }
+  finally {
+    savingStageId.value = ''
+  }
 }
 
 const runMigration = async (runMode) => {
-  if (!activeOrganization.value?.id) return
-  running.value = true
-  error.value = ''
-  notice.value = ''
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    running.value = true
+    runningMode.value = runMode
+  })
   try {
     const res = await authedFetch(`/api/migrations/${projectId.value}/run`, {
       method: 'POST',
@@ -607,13 +984,25 @@ const runMigration = async (runMode) => {
     })
     notice.value = `${runMode} run completed (${res.stageResults?.length || 0} stages).`
     await load()
+    activeTab.value = 'run'
   }
   catch (err) {
-    error.value = err?.data?.statusMessage || err?.message || 'Run failed'
+    const failed = err?.data?.data?.failedStage || err?.data?.failedStage
+    if (failed?.stageName) {
+      error.value = `Failed on data flow stage “${failed.stageName}”${failed.entityKey ? ` (${failed.entityKey})` : ''}: ${failed.error || err?.data?.statusMessage || err?.message}`
+      if (failed.hint) notice.value = failed.hint
+    }
+    else {
+      error.value = err?.data?.statusMessage || err?.message || 'Run failed'
+    }
     await load()
+    activeTab.value = 'run'
+    const latestFailed = (runs.value || []).find((r) => r.status === 'failed')
+    if (latestFailed?.id) expandedRunId.value = latestFailed.id
   }
   finally {
     running.value = false
+    runningMode.value = ''
   }
 }
 

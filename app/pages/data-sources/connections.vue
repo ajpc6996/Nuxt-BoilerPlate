@@ -100,6 +100,14 @@
                 <button
                   type="button"
                   class="btn-secondary !px-2 !py-1 text-xs"
+                  :disabled="busyId === row.id"
+                  @click="testConnectionRow(row)"
+                >
+                  {{ busyId === row.id && busyMode === 'test' ? 'Testing…' : 'Test' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn-secondary !px-2 !py-1 text-xs"
                   @click="openEdit(row)"
                 >
                   Edit
@@ -249,13 +257,34 @@
             This type has no shared connection fields. You can still create a named connection for sources to attach to.
           </p>
 
-        <div class="mt-6 flex justify-end gap-2">
+          <p
+            v-if="editorError"
+            class="rounded-md border border-[var(--danger)] px-3 py-2 text-sm text-[var(--danger)]"
+          >
+            {{ editorError }}
+          </p>
+          <p
+            v-else-if="editorNotice"
+            class="rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--ink)]"
+          >
+            {{ editorNotice }}
+          </p>
+
+        <div class="mt-6 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             class="btn-secondary !px-4 !py-2"
             @click="editorOpen = false"
           >
             Cancel
+          </button>
+          <button
+            type="button"
+            class="btn-secondary !px-4 !py-2"
+            :disabled="testing || !form.connectorTypeId"
+            @click="testFromEditor"
+          >
+            {{ testing ? 'Testing…' : 'Test connection' }}
           </button>
           <button
             type="submit"
@@ -293,9 +322,13 @@ const pending = ref(false)
 const error = ref('')
 const notice = ref('')
 const busyId = ref(null)
+const busyMode = ref(null)
 const editorOpen = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
+const testing = ref(false)
+const editorError = ref('')
+const editorNotice = ref('')
 
 const form = reactive({
   name: '',
@@ -399,6 +432,8 @@ function openCreate() {
   }
   form.credentials = {}
   form.hasSecrets = false
+  editorError.value = ''
+  editorNotice.value = ''
   editorOpen.value = true
 }
 
@@ -407,6 +442,9 @@ function openCreate() {
  */
 async function openEdit(row) {
   error.value = ''
+  notice.value = ''
+  editorError.value = ''
+  editorNotice.value = ''
   try {
     const res = await authedFetch(`/api/connections/${row.id}`, {
       query: { organizationId: activeOrganization.value.id },
@@ -415,7 +453,8 @@ async function openEdit(row) {
     editingId.value = item.id
     form.name = item.name
     form.connectorTypeId = item.connector_type_id
-    form.direction = normalizeConnectionDirection(item.direction)
+    // Prefer API direction; fall back to list-row direction if GET was stale.
+    form.direction = normalizeConnectionDirection(item.direction ?? row.direction)
     form.hasSecrets = Boolean(item.hasSecrets)
     form.config = { ...(item.config || {}) }
     form.credentials = {}
@@ -428,6 +467,83 @@ async function openEdit(row) {
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load connection'
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} row
+ */
+async function testConnectionRow(row) {
+  if (!activeOrganization.value?.id || busyId.value) return
+  busyId.value = row.id
+  busyMode.value = 'test'
+  error.value = ''
+  notice.value = `Testing “${row.name || 'connection'}”…`
+  await nextTick()
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve)
+    })
+  })
+  try {
+    const res = await authedFetch(`/api/connections/${row.id}/test`, {
+      method: 'POST',
+      body: { organizationId: activeOrganization.value.id },
+    })
+    notice.value = res.message || 'Connection test succeeded'
+    await loadConnections()
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Connection test failed'
+    notice.value = ''
+    await loadConnections()
+  }
+  finally {
+    busyId.value = null
+    busyMode.value = null
+  }
+}
+
+async function testFromEditor() {
+  if (!activeOrganization.value?.id || !form.connectorTypeId || testing.value) return
+  testing.value = true
+  editorError.value = ''
+  editorNotice.value = 'Testing connection…'
+  await nextTick()
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve)
+    })
+  })
+  try {
+    const body = {
+      organizationId: activeOrganization.value.id,
+      direction: form.direction,
+      config: form.config,
+      credentials: form.credentials,
+    }
+    const res = editingId.value
+      ? await authedFetch(`/api/connections/${editingId.value}/test`, {
+          method: 'POST',
+          body,
+        })
+      : await authedFetch('/api/connections/test', {
+          method: 'POST',
+          body: {
+            ...body,
+            connectorTypeId: form.connectorTypeId,
+          },
+        })
+    editorNotice.value = res.message || 'Connection test succeeded'
+    if (editingId.value) await loadConnections()
+  }
+  catch (err) {
+    editorError.value = err?.data?.statusMessage || err?.message || 'Connection test failed'
+    editorNotice.value = ''
+    if (editingId.value) await loadConnections()
+  }
+  finally {
+    testing.value = false
   }
 }
 
@@ -531,6 +647,7 @@ async function removeConnection(row) {
   }
   finally {
     busyId.value = null
+    busyMode.value = null
   }
 }
 

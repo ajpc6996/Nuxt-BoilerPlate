@@ -65,6 +65,7 @@
             <th class="px-2 py-2">Source(s)</th>
             <th class="px-2 py-2">Transform</th>
             <th class="px-2 py-2">Destination</th>
+            <th class="px-2 py-2">If null</th>
             <th class="px-2 py-2">Req</th>
             <th class="px-2 py-2" />
           </tr>
@@ -90,17 +91,42 @@
                 @change="updateRow(row.id, { transform: $event.target.value })"
               >
                 <option value="copy">copy</option>
+                <option value="constant">constant</option>
                 <option value="template">template</option>
                 <option value="map">map</option>
                 <option value="join">join</option>
               </select>
+              <input
+                v-if="row.transform === 'constant'"
+                :value="formatConstant(row.constantValue)"
+                class="mt-1 w-full min-w-[8rem] rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-[var(--ink)]"
+                placeholder="1 or __NOW__ or true"
+                @change="updateRow(row.id, { constantValue: parseConstant($event.target.value) })"
+              >
             </td>
             <td class="px-2 py-2">
               <input
                 :value="row.destination"
                 class="w-full min-w-[8rem] rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-[var(--ink)]"
+                list="migration-dest-fields"
                 @input="updateRow(row.id, { destination: $event.target.value })"
               >
+            </td>
+            <td class="px-2 py-2">
+              <MappingIfNullInput
+                v-if="showIfNull(row)"
+                :model-value="row.ifNullValue"
+                :destination="row.destination"
+                :destination-system-id="destinationSystemId"
+                :entity-key="entityKey"
+                @update:model-value="updateRow(row.id, { ifNullValue: $event })"
+              />
+              <span
+                v-else
+                class="text-[var(--mute-soft)]"
+              >
+                —
+              </span>
             </td>
             <td class="px-2 py-2">
               <input
@@ -124,6 +150,19 @@
       </table>
     </div>
 
+    <p class="text-xs text-[var(--mute-soft)]">
+      <span class="font-medium text-[var(--mute)]">If null</span> sets a static destination value when the mapped source is null
+      (after copy/map/cast). Restricted fields show a dropdown of valid values.
+    </p>
+
+    <datalist id="migration-dest-fields">
+      <option
+        v-for="field in destinationFields"
+        :key="field"
+        :value="field"
+      />
+    </datalist>
+
     <button
       type="button"
       class="btn-secondary self-start !px-3 !py-1.5 text-xs"
@@ -139,6 +178,8 @@ const props = defineProps({
   modelValue: { type: Array, default: () => [] },
   sourceFields: { type: Array, default: () => [] },
   destinationFields: { type: Array, default: () => [] },
+  destinationSystemId: { type: String, default: '' },
+  entityKey: { type: String, default: '' },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -209,5 +250,32 @@ const updateSources = (id, raw) => {
     .map((s) => s.trim())
     .filter(Boolean)
   updateRow(id, { sources })
+}
+
+/**
+ * @param {Record<string, unknown>} row
+ */
+function showIfNull(row) {
+  const transform = String(row.transform || 'copy').trim()
+  return transform !== 'constant'
+}
+
+function formatConstant(value) {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value)
+  return String(value)
+}
+
+function parseConstant(raw) {
+  const s = String(raw ?? '').trim()
+  if (s === '') return ''
+  if (s === 'true') return true
+  if (s === 'false') return false
+  if (s === '__NOW__' || s === '{{now}}') return '__NOW__'
+  if (/^-?\d+$/.test(s)) {
+    const n = Number(s)
+    if (Number.isSafeInteger(n)) return n
+  }
+  return s
 }
 </script>

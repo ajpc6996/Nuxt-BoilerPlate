@@ -1,6 +1,7 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
 import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
-import { cleanEntityKey } from '~~/shared/migration.js'
+import { cleanEntityKey, resolveRunnerTableConfig } from '~~/shared/migration.js'
+import { enrichMappingsWithSystemDefaults, enrichMappingsWithLookupMaps } from '~~/shared/migrationSystems.js'
 import {
   createExtractPipeline,
   createTransformDualSinkPipeline,
@@ -65,43 +66,35 @@ export async function materializeMigrationStages(admin, opts) {
         throw createError({ statusCode: 400, statusMessage: validation.error })
       }
 
+      // Per-entity table/query for the inbound runner (connection has host/db only).
+      const sourceRunner = resolveRunnerTableConfig(
+        cfg.sourceEntity || cfg.entityLabel,
+        entityKey,
+      )
+      if (!sourceRunner.table && !sourceRunner.query) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: `Extract stage “${stage.name}” needs a source table (set sourceEntity on the stage, e.g. Users).`,
+        })
+      }
+      const extractConfig = {
+        ...sourceRunner,
+      }
+      if (Number(cfg.maxRows) > 0) {
+        extractConfig.maxRows = Number(cfg.maxRows)
+      }
+
       const flowName = `[Mig] ${project.name} · Extract ${entityKey || stage.name}`
-      let dataSourceId = stage.data_source_id
-
-      if (dataSourceId) {
-        await admin
-          .from('data_sources')
-          .update({
-            name: flowName,
-            destination_table: destTable,
-            pipeline,
-            connection_id: project.source_connection_id,
-            status: 'draft',
-          })
-          .eq('id', dataSourceId)
-          .eq('organization_id', opts.organizationId)
-      }
-      else {
-        const { data: created, error } = await admin
-          .from('data_sources')
-          .insert({
-            organization_id: opts.organizationId,
-            connection_id: project.source_connection_id,
-            name: flowName,
-            destination_table: destTable,
-            pipeline,
-            config: {},
-            status: 'draft',
-            created_by: opts.userId,
-          })
-          .select('id')
-          .single()
-
-        if (error || !created) {
-          throw createError({ statusCode: 400, statusMessage: error?.message || 'Create data flow failed' })
-        }
-        dataSourceId = created.id
-      }
+      const dataSourceId = await upsertMigrationDataSource(admin, {
+        organizationId: opts.organizationId,
+        userId: opts.userId,
+        existingId: stage.data_source_id,
+        name: flowName,
+        connectionId: project.source_connection_id,
+        destinationTable: destTable,
+        pipeline,
+        config: extractConfig,
+      })
 
       extractByEntity[entityKey] = dataSourceId
 
@@ -146,8 +139,24 @@ export async function materializeMigrationStages(admin, opts) {
         continue
       }
 
-      const mappings = Array.isArray(cfg.fieldMappings) ? cfg.fieldMappings : []
-      const actions = fieldMappingsToTransformActions(mappings)
+      const rawMappings = Array.isArray(cfg.fieldMappings) ? cfg.fieldMappings : []
+      const planConfig = project.plan_config && typeof project.plan_config === 'object'
+        ? project.plan_config
+        : {}
+      const destinationSystemId = String(planConfig.destinationSystemId || '').trim()
+      const destEntityRef = String(cfg.destinationEntity || cfg.entityLabel || entityKey).trim()
+      const withLookups = enrichMappingsWithLookupMaps(
+        destinationSystemId,
+        destEntityRef || entityKey,
+        rawMappings,
+      )
+      const mappings = enrichMappingsWithSystemDefaults(
+        destinationSystemId,
+        destEntityRef || entityKey,
+        withLookups,
+      )
+      // Convert migration { sources, destination } → pipeline { field, targetField }
+      const actions = fieldMappingsToTransformActions(mappings, { destinationSystemId })
       const pipeline = createTransformDualSinkPipeline({
         extractSourceId,
         destinationTable: destTable,
@@ -160,50 +169,37 @@ export async function materializeMigrationStages(admin, opts) {
         throw createError({ statusCode: 400, statusMessage: validation.error })
       }
 
+      // Outbound export table lives under config.export (merged onto destination connection).
+      // Skip existing PKs so re-running pilot/full does not fail on prior inserts.
+      const destRunner = resolveRunnerTableConfig(
+        cfg.destinationEntity || cfg.entityLabel,
+        entityKey,
+      )
+      const mapConfig = {
+        export: {
+          ...(destRunner.table || destRunner.query ? destRunner : {}),
+          onConflict: 'skip',
+        },
+      }
+
       const flowName = `[Mig] ${project.name} · Map ${entityKey || stage.name}`
-      let dataSourceId = stage.data_source_id
-
-      if (dataSourceId) {
-        await admin
-          .from('data_sources')
-          .update({
-            name: flowName,
-            destination_table: destTable,
-            pipeline,
-            connection_id: project.source_connection_id,
-            status: 'draft',
-          })
-          .eq('id', dataSourceId)
-          .eq('organization_id', opts.organizationId)
-      }
-      else {
-        const { data: created, error } = await admin
-          .from('data_sources')
-          .insert({
-            organization_id: opts.organizationId,
-            connection_id: project.source_connection_id,
-            name: flowName,
-            destination_table: destTable,
-            pipeline,
-            config: {},
-            status: 'draft',
-            created_by: opts.userId,
-          })
-          .select('id')
-          .single()
-
-        if (error || !created) {
-          throw createError({ statusCode: 400, statusMessage: error?.message || 'Create data flow failed' })
-        }
-        dataSourceId = created.id
-      }
+      const dataSourceId = await upsertMigrationDataSource(admin, {
+        organizationId: opts.organizationId,
+        userId: opts.userId,
+        existingId: stage.data_source_id,
+        name: flowName,
+        connectionId: project.source_connection_id,
+        destinationTable: destTable,
+        pipeline,
+        config: mapConfig,
+      })
 
       await admin
         .from('migration_stages')
         .update({
           data_source_id: dataSourceId,
           status: 'ready',
-          config: { ...cfg, destinationTable: destTable },
+          config: { ...cfg, destinationTable: destTable, fieldMappings: mappings },
         })
         .eq('id', stage.id)
 
@@ -217,4 +213,89 @@ export async function materializeMigrationStages(admin, opts) {
     .eq('id', opts.projectId)
 
   return { results, projectKey }
+}
+
+/**
+ * Update by stage-linked id, else reuse org+name (unique), else insert.
+ * Prevents duplicate-key failures after regenerating an AI plan (new stages, old flows).
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} admin
+ * @param {{
+ *   organizationId: string,
+ *   userId: string,
+ *   existingId?: string | null,
+ *   name: string,
+ *   connectionId: string,
+ *   destinationTable: string,
+ *   pipeline: Record<string, unknown>,
+ *   config: Record<string, unknown>,
+ * }} opts
+ */
+async function upsertMigrationDataSource(admin, opts) {
+  const patch = {
+    name: opts.name,
+    destination_table: opts.destinationTable,
+    pipeline: opts.pipeline,
+    connection_id: opts.connectionId,
+    config: opts.config || {},
+    status: 'draft',
+    updated_at: new Date().toISOString(),
+  }
+
+  let dataSourceId = opts.existingId ? String(opts.existingId) : ''
+
+  if (dataSourceId) {
+    const { data: existingById } = await admin
+      .from('data_sources')
+      .select('id')
+      .eq('id', dataSourceId)
+      .eq('organization_id', opts.organizationId)
+      .maybeSingle()
+
+    if (existingById?.id) {
+      const { error } = await admin
+        .from('data_sources')
+        .update(patch)
+        .eq('id', dataSourceId)
+        .eq('organization_id', opts.organizationId)
+      if (error) {
+        throw createError({ statusCode: 400, statusMessage: error.message })
+      }
+      return dataSourceId
+    }
+  }
+
+  const { data: existingByName } = await admin
+    .from('data_sources')
+    .select('id')
+    .eq('organization_id', opts.organizationId)
+    .eq('name', opts.name)
+    .maybeSingle()
+
+  if (existingByName?.id) {
+    const { error } = await admin
+      .from('data_sources')
+      .update(patch)
+      .eq('id', existingByName.id)
+      .eq('organization_id', opts.organizationId)
+    if (error) {
+      throw createError({ statusCode: 400, statusMessage: error.message })
+    }
+    return existingByName.id
+  }
+
+  const { data: created, error } = await admin
+    .from('data_sources')
+    .insert({
+      organization_id: opts.organizationId,
+      created_by: opts.userId,
+      ...patch,
+    })
+    .select('id')
+    .single()
+
+  if (error || !created) {
+    throw createError({ statusCode: 400, statusMessage: error?.message || 'Create data flow failed' })
+  }
+  return created.id
 }

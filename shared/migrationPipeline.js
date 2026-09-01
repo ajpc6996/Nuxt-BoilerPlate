@@ -3,6 +3,32 @@
  */
 
 import { migrationIngestTable } from './migration.js'
+import {
+  SYSTEM_BOOLEAN_DESTINATIONS,
+  isIntegerDestinationField,
+} from './migrationSystems.js'
+
+/**
+ * @param {unknown} value
+ */
+function hasMappingValue(value) {
+  return value !== undefined && value !== null && value !== ''
+}
+
+/**
+ * @param {Array<Record<string, unknown>>} actions
+ * @param {string} dest
+ * @param {Record<string, unknown>} mapping
+ */
+function pushIfNullDefault(actions, dest, mapping) {
+  if (!hasMappingValue(mapping.ifNullValue)) return
+  actions.push({
+    op: 'default',
+    field: dest,
+    value: mapping.ifNullValue,
+    when: 'null',
+  })
+}
 
 /**
  * Raw extract: Retrieve → Ingest (append, retention).
@@ -112,53 +138,138 @@ export function createTransformDualSinkPipeline(opts) {
 
 /**
  * Convert field mappings to Transform node actions.
- * @param {Array<{ sources: string[], destination: string, transform?: string, cast?: string, mapValues?: Record<string, string>, template?: string }>} mappings
+ * Pipeline Transform expects { field, targetField } (not migration { sources, destination }).
+ * @param {Array<{ sources?: string[], source?: string, destination: string, transform?: string, cast?: string, mapValues?: Record<string, string>, template?: string }>} mappings
+ * @param {{ destinationSystemId?: string }} [opts]
  */
-export function fieldMappingsToTransformActions(mappings) {
+export function fieldMappingsToTransformActions(mappings, opts = {}) {
   const actions = []
+  /** @type {string[]} */
+  const keepFields = []
+  const destSystem = String(opts.destinationSystemId || '').trim().toLowerCase()
+  const boolDest = destSystem && SYSTEM_BOOLEAN_DESTINATIONS[destSystem]
+    ? SYSTEM_BOOLEAN_DESTINATIONS[destSystem]
+    : SYSTEM_BOOLEAN_DESTINATIONS.zammad
+
   for (const m of mappings || []) {
-    const dest = String(m.destination || '').trim()
+    const dest = String(m.destination || m.targetField || '').trim()
     if (!dest) continue
 
-    const sources = Array.isArray(m.sources) ? m.sources.filter(Boolean) : []
-    const transform = String(m.transform || 'copy').trim()
+    const sources = Array.isArray(m.sources)
+      ? m.sources.map((s) => String(s || '').trim()).filter(Boolean)
+      : (m.source || m.field || m.from
+        ? [String(m.source || m.field || m.from).trim()].filter(Boolean)
+        : [])
+    const transform = String(m.transform || m.op || 'copy').trim()
+    const hasConstant = m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
+
+    if (transform === 'constant' || (hasConstant && !sources.length && transform !== 'template')) {
+      // Always set — constants must win over accidental source copies (e.g. SortOrder→active).
+      actions.push({
+        op: 'default',
+        field: dest,
+        value: m.constantValue,
+        when: 'always',
+      })
+      keepFields.push(dest)
+      continue
+    }
 
     if (transform === 'template' && m.template) {
-      actions.push({ op: 'template', field: dest, template: m.template })
+      actions.push({ op: 'template', targetField: dest, template: m.template })
+      keepFields.push(dest)
+      pushIfNullDefault(actions, dest, m)
       continue
     }
 
     if (transform === 'map' && m.mapValues && typeof m.mapValues === 'object') {
-      const src = sources[0] || dest
+      const src = sources[0]
+      if (!src) continue
+      // Keep unmatched values (numeric RT status ids / unknown labels).
+      // Unknown labels stay as strings → number cast → null → constant default.
       actions.push({
         op: 'map',
-        field: dest,
-        source: src,
-        map: m.mapValues,
-        fallback: 'null',
+        field: src,
+        targetField: dest,
+        mapping: m.mapValues,
+        fallback: 'keep',
       })
+      keepFields.push(dest)
+      if (boolDest.has(dest.toLowerCase())) {
+        actions.push({ op: 'cast', field: dest, to: 'boolean', onError: 'null' })
+      }
+      else if (isIntegerDestinationField(dest, boolDest)) {
+        actions.push({ op: 'cast', field: dest, to: 'number', onError: 'null' })
+      }
+      if (hasConstant) {
+        actions.push({
+          op: 'default',
+          field: dest,
+          value: m.constantValue,
+          when: 'null_or_empty',
+        })
+      }
+      pushIfNullDefault(actions, dest, m)
       continue
     }
 
-    if (sources.length > 1) {
+    if (sources.length > 1 || transform === 'join') {
+      if (sources.length < 2) continue
       actions.push({
         op: 'join',
-        field: dest,
         fields: sources,
+        targetField: dest,
         separator: ' ',
       })
+      keepFields.push(dest)
+      pushIfNullDefault(actions, dest, m)
       continue
     }
 
-    const src = sources[0] || dest
-    if (src !== dest) {
-      actions.push({ op: 'copy', field: dest, from: src })
+    const src = sources[0]
+    if (src && src !== dest) {
+      // field = source column, targetField = destination column
+      actions.push({ op: 'copy', field: src, targetField: dest })
+    }
+    // Same-name fields pass through; still keep them for export projection.
+    if (src || dest) {
+      keepFields.push(dest)
     }
 
     if (m.cast) {
-      actions.push({ op: 'cast', field: dest, type: m.cast })
+      const castField = src && src !== dest ? dest : (src || dest)
+      if (castField) {
+        actions.push({ op: 'cast', field: castField, to: String(m.cast).trim() })
+      }
     }
+    else if (boolDest.has(dest.toLowerCase())) {
+      // Avoid Postgres: invalid input syntax for type boolean: "2"
+      actions.push({ op: 'cast', field: dest, to: 'boolean', onError: 'null' })
+    }
+    else if (isIntegerDestinationField(dest, boolDest)) {
+      // Avoid Postgres: invalid input syntax for type integer: "approved"
+      actions.push({ op: 'cast', field: dest, to: 'number', onError: 'null' })
+    }
+
+    // Optional constant fill when source is missing/null/empty
+    if (hasConstant) {
+      actions.push({
+        op: 'default',
+        field: dest,
+        value: m.constantValue,
+        when: 'null_or_empty',
+      })
+    }
+    pushIfNullDefault(actions, dest, m)
   }
+
+  // Project to destination columns only — outbound INSERT must not send
+  // leftover source columns (e.g. RT "Zip") into destination tables.
+  const uniqueKeep = [...new Set(keepFields.filter(Boolean))]
+  if (uniqueKeep.length) {
+    actions.push({ op: 'keep', fields: uniqueKeep })
+  }
+
   return actions
 }
 

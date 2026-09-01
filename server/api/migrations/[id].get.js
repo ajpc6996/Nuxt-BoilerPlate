@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: runs } = await admin
     .from('migration_runs')
-    .select('id, run_mode, status, run_tag, started_at, completed_at, last_error')
+    .select('id, run_mode, status, run_tag, started_at, completed_at, last_error, stage_results')
     .eq('migration_project_id', id)
     .order('started_at', { ascending: false })
     .limit(10)

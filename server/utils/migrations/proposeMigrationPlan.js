@@ -1,34 +1,70 @@
 import { callLlmJson } from '~~/server/utils/connectors/proposeConnectorType.js'
 import { listRegisteredRunnerKeys } from '~~/server/utils/connectors/registry.js'
 import { normalizeProposedPlan } from '~~/server/utils/migrations.js'
+import {
+  getMigrationSystem,
+  SYSTEM_DESTINATION_DEFAULTS,
+} from '~~/shared/migrationSystems.js'
 
 /**
  * Propose a multi-stage migration plan via configured LLM.
  * @param {{
  *   description: string,
+ *   operatorNotes?: string,
  *   sourceSummary?: string,
  *   destinationSummary?: string,
+ *   sourceSystemId?: string,
+ *   destinationSystemId?: string,
  *   docsUrl?: string,
+ *   docsUrls?: string[],
  *   entities?: Array<{ key?: string, label?: string, sourceFields?: string[], destinationFields?: string[] }>,
  * }} input
  */
 export async function proposeMigrationPlan(input) {
   const description = String(input.description || '').trim()
-  if (description.length < 20) {
+  const operatorNotes = String(input.operatorNotes || '').trim()
+  const combinedDescription = [description, operatorNotes].filter(Boolean).join('\n\n')
+  if (combinedDescription.length < 20) {
     throw createError({
       statusCode: 400,
-      statusMessage: 'Provide a richer migration description (at least ~20 characters)',
+      statusMessage: 'Provide a richer migration description or operator notes (at least ~20 characters)',
     })
   }
 
+  const docsUrls = normalizeDocsUrls(input.docsUrls, input.docsUrl)
+
   const runners = await listRegisteredRunnerKeys()
-  const system = buildMigrationSystemPrompt(runners)
-  const userParts = [`Migration goal:\n${description}`]
-  if (input.sourceSummary) userParts.push(`Source system:\n${String(input.sourceSummary).trim()}`)
-  if (input.destinationSummary) userParts.push(`Destination system:\n${String(input.destinationSummary).trim()}`)
-  if (input.docsUrl) userParts.push(`Docs URL:\n${String(input.docsUrl).trim()}`)
+  const sourceSystem = getMigrationSystem(input.sourceSystemId || 'custom')
+  const destinationSystem = getMigrationSystem(input.destinationSystemId || 'custom')
+  const system = buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem)
+
+  const userParts = [`Migration goal:\n${description || '(see operator notes)'}`]
+  if (operatorNotes) {
+    userParts.push(`Operator guidance (high priority — follow these constraints and preferences):\n${operatorNotes}`)
+  }
+  userParts.push(
+    `Selected systems:\n- Source: ${sourceSystem.label} (id=${sourceSystem.id}, db=${sourceSystem.database}, preferredRunner=${sourceSystem.preferredRunner})\n- Destination: ${destinationSystem.label} (id=${destinationSystem.id}, db=${destinationSystem.database}, preferredRunner=${destinationSystem.preferredRunner})`,
+  )
+  if (sourceSystem.notes) userParts.push(`Source system notes:\n${sourceSystem.notes}`)
+  if (destinationSystem.notes) userParts.push(`Destination system notes:\n${destinationSystem.notes}`)
+  if (input.sourceSummary) userParts.push(`Source summary:\n${String(input.sourceSummary).trim()}`)
+  if (input.destinationSummary) {
+    userParts.push(`Destination summary:\n${String(input.destinationSummary).trim()}`)
+  }
+  if (docsUrls.length) {
+    userParts.push(
+      `Authoritative documentation links (prefer these over guesswork; cite assumptions when a link cannot be fetched):\n${docsUrls.map((u, i) => `${i + 1}. ${u}`).join('\n')}`,
+    )
+  }
   if (Array.isArray(input.entities) && input.entities.length) {
     userParts.push(`Known entities:\n${JSON.stringify(input.entities, null, 2)}`)
+  }
+
+  const destDefaults = SYSTEM_DESTINATION_DEFAULTS[destinationSystem.id]
+  if (destDefaults) {
+    userParts.push(
+      `Platform-known destination NOT NULL / audit defaults (must include unless docs prove otherwise):\n${JSON.stringify(destDefaults, null, 2)}`,
+    )
   }
 
   const raw = await callLlmJson({
@@ -40,77 +76,169 @@ export async function proposeMigrationPlan(input) {
 }
 
 /**
- * @param {string[]} runners
+ * @param {unknown} docsUrls
+ * @param {unknown} docsUrl
+ * @returns {string[]}
  */
-function buildMigrationSystemPrompt(runners) {
-  return `You design multi-stage data migration plans for a platform that uses:
-- Hybrid model: raw data always lands in ingest.* tables (append + retention)
-- Mapped rows use dual-sink: same transform output writes ingest.* (mapped) AND Export Temp Stage to outbound destination
-- Each executable stage becomes a Data Flow pipeline
+function normalizeDocsUrls(docsUrls, docsUrl) {
+  /** @type {string[]} */
+  const out = []
+  const push = (raw) => {
+    String(raw || '')
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((u) => {
+        if (!/^https?:\/\//i.test(u)) return
+        if (!out.includes(u)) out.push(u)
+      })
+  }
+  if (Array.isArray(docsUrls)) docsUrls.forEach(push)
+  else if (docsUrls) push(docsUrls)
+  if (docsUrl) push(docsUrl)
+  return out.slice(0, 20)
+}
+
+/**
+ * @param {string[]} runners
+ * @param {{ id: string, label: string, database: string, preferredRunner: string, notes?: string }} sourceSystem
+ * @param {{ id: string, label: string, database: string, preferredRunner: string, notes?: string }} destinationSystem
+ */
+function buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem) {
+  return `You are a senior data-migration architect. Plans you produce may be used in production without further code changes, so you MUST prevent avoidable runtime failures up front.
+
+Platform execution model:
+- Hybrid: raw extract always lands in ingest.* (append + retention)
+- Transform stages dual-sink: mapped rows write ingest.* AND Export Temp Stage to the outbound destination
+- Each executable stage becomes a Data Flow; outbound SQL INSERT uses ONLY mapped destination columns
+- Unmapped source columns must NEVER be exported (they cause "column does not exist" errors)
 
 Registered connector runners (only recommend these): ${runners.join(', ')}
+
+Selected endpoints for this plan:
+- Source: ${sourceSystem.label} (${sourceSystem.id} / ${sourceSystem.database})
+- Destination: ${destinationSystem.label} (${destinationSystem.id} / ${destinationSystem.database})
+
+CRITICAL — destination constraints & documentation:
+1. Use your knowledge of the official ${destinationSystem.label} schema/API docs thoroughly. Prefer any operator-supplied documentation links over guesswork.
+2. Treat operator guidance and documentation links as authoritative requirements for constraints, table/column names, and required constants.
+3. For every destination entity/table you map into, identify and mitigate:
+   - NOT NULL columns without DB defaults
+   - Foreign keys / required reference IDs (created_by_id, updated_by_id, organization_id, group_id, customer_id, state_id, priority_id, type_id, etc.)
+   - Unique constraints and natural keys
+   - Enums / state machines / type lookup IDs
+   - Case-sensitive table/column names
+   - Timestamps (created_at, updated_at) and timezone expectations
+   - Boolean / integer / UUID type mismatches
+   - Soft-delete / active flags
+4. If a required destination column has no source equivalent, emit a constant mapping (transform:"constant") with a safe production default and document the assumption in aiNotes / stage notes.
+5. Prefer real destination column names exactly as documented — never invent columns.
+6. Prefer real source table names (sourceEntity) and destination table names (destinationEntity).
+7. Export projection is destination-only: every transform stage fieldMappings destination list must be exactly the columns you intend to INSERT/POST.
+8. Call out residual risks that cannot be auto-fixed (auth, network, missing seed users, Elasticsearch reindex) in aiNotes and generation_notes.
+9. Order stages so dependencies succeed (users/groups before tickets; tickets before articles; etc.).
+
+Zammad-specific (when destination is Zammad):
+- Direct PostgreSQL writes require audit columns on most tables: created_by_id, updated_by_id, created_at, updated_at
+- Default actor id 1 only if docs/environment imply a system/admin user exists; otherwise note that operators must set a real admin id
+- Use "__NOW__" for timestamp constants
+- Include active=true (boolean true, never an RT SortOrder/id) where the table requires it
+- groups: follow_up_assignment, shared_drafts, active are booleans; follow_up_possible is the string "yes" or "new_ticket" — never map SortOrder or numeric IDs into boolean columns
+- tickets: state_id and priority_id are integers (FK). Never copy RT Status/Priority *names* (e.g. "approved") into them — use transform:"map" from names to Zammad ids (new=1, open=2, closed=4, normal priority=2). Unknown names should fall back to open/normal.
+- Map RT Queues→groups, Users→users, Tickets→tickets, Transactions(Create/Correspond/Comment)→articles carefully
+- Warn that Zammad may need cache clear / background jobs / Elasticsearch reindex after DB inserts
+
+RT-specific (when source is Request Tracker):
+- Typical MySQL tables are PascalCase (Users, Queues, Tickets, Transactions, Attachments)
+- Set sourceEntity to those real table names
 
 Return ONLY valid JSON (no markdown):
 {
   "sourceSummary": "brief source description",
   "destinationSummary": "brief destination description",
-  "aiNotes": "risks, assumptions, ordering rationale",
+  "aiNotes": "risks, assumptions, constraint mitigations, ordering rationale",
+  "constraintChecklist": [
+    {
+      "entityKey": "users",
+      "destinationTable": "users",
+      "requiredColumns": ["login","created_by_id","updated_by_id","created_at","updated_at"],
+      "mitigations": ["constant updated_by_id=1", "constant created_at=__NOW__"],
+      "residualRisks": ["admin user id 1 must exist"]
+    }
+  ],
   "entities": [
-    { "key": "customers", "label": "Customers", "sourceFields": ["id","name"], "destinationFields": ["customer_id","full_name"] }
+    {
+      "key": "users",
+      "label": "Users",
+      "sourceFields": ["id","Name","EmailAddress"],
+      "destinationFields": ["id","login","email","created_by_id","updated_by_id","created_at","updated_at","active"]
+    }
   ],
   "connectorNeeds": [
     {
       "role": "source|destination",
-      "system": "Legacy MySQL",
-      "preferredRunner": "rest_generic",
+      "system": "system name",
+      "preferredRunner": "mysql|postgres|rest_generic|...",
       "status": "available|disabled|missing_runner",
-      "fallback": "optional fallback approach",
-      "platformAction": "what platform admin must do if missing"
+      "fallback": "optional fallback",
+      "platformAction": "what admin must do if missing"
     }
   ],
   "stages": [
     {
       "sortOrder": 0,
-      "name": "Extract customers (raw)",
+      "name": "Extract users (raw)",
       "description": "Landing in ingest",
       "stageType": "extract",
-      "entityKey": "customers",
-      "entityLabel": "Customers",
-      "sourceEntity": "legacy.customers",
+      "entityKey": "users",
+      "entityLabel": "Users",
+      "sourceEntity": "Users",
       "destinationEntity": "",
       "fieldMappings": [],
       "validationRules": [],
-      "connectorNeeds": []
+      "notes": ""
     },
     {
       "sortOrder": 1,
-      "name": "Map customers",
+      "name": "Map users",
       "stageType": "transform",
-      "entityKey": "customers",
+      "entityKey": "users",
+      "entityLabel": "Users",
+      "sourceEntity": "Users",
+      "destinationEntity": "users",
       "fieldMappings": [
-        { "sources": ["id"], "destination": "customer_id", "transform": "copy", "required": true },
-        { "sources": ["first_name","last_name"], "destination": "full_name", "transform": "template", "template": "{{first_name}} {{last_name}}" }
-      ]
+        { "sources": ["Name"], "destination": "login", "transform": "copy", "required": true },
+        { "sources": ["EmailAddress"], "destination": "email", "transform": "copy", "required": true },
+        { "sources": [], "destination": "created_by_id", "transform": "constant", "constantValue": 1, "required": true },
+        { "sources": [], "destination": "updated_by_id", "transform": "constant", "constantValue": 1, "required": true },
+        { "sources": [], "destination": "created_at", "transform": "constant", "constantValue": "__NOW__", "required": true },
+        { "sources": [], "destination": "updated_at", "transform": "constant", "constantValue": "__NOW__", "required": true },
+        { "sources": [], "destination": "active", "transform": "constant", "constantValue": true, "required": false }
+      ],
+      "notes": "Audit columns required by destination NOT NULL constraints"
     },
     {
       "sortOrder": 2,
-      "name": "Validate customer counts",
+      "name": "Validate users",
       "stageType": "validate",
-      "entityKey": "customers",
+      "entityKey": "users",
       "validationRules": [
-        { "type": "row_count_match", "sourceStage": "extract", "targetStage": "transform" },
-        { "type": "required_fields", "fields": ["customer_id","full_name"] }
+        { "type": "required_fields", "fields": ["login","created_by_id","updated_by_id","created_at","updated_at"] }
       ]
     }
   ],
-  "generation_notes": "why this stage order and any blocked dependencies"
+  "generation_notes": "constraint research summary + why this stage order"
 }
 
-Rules:
-- For each business entity, prefer: extract (raw ingest) → transform (map + dual-sink export) → validate
+Hard rules:
+- For each business entity: extract → transform (map + dual-sink) → validate (unless blocked)
 - stageType must be one of: extract, transform, validate, export, manual
-- fieldMappings only on transform stages; use transform: copy | template | map | join
-- Mark connectorNeeds status missing_runner when no registered runner fits; never invent runner keys
-- Keep stages ordered with sortOrder starting at 0
-- entityKey lowercase snake_case`
+- fieldMappings only on transform stages; transform: copy | constant | template | map | join
+- constant mappings: set constantValue (number|boolean|string). Use "__NOW__" for timestamps
+- optional ifNullValue on copy/map/join/template rows: static value when source is null only (use transform:"copy" + ifNullValue, not constant)
+- Never leave sourceEntity empty on extract/transform; never leave destinationEntity empty on transform/export
+- destinationFields on entities MUST include every NOT NULL / required column you will insert
+- Do not invent runner keys; mark missing runners in connectorNeeds
+- sortOrder starts at 0; entityKey lowercase snake_case
+- Prefer preferredRunner for each selected system when available in the registered list`
 }

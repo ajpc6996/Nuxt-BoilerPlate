@@ -1416,6 +1416,11 @@ async function runFromEditor(mode) {
   editorBusyMode.value = mode
   applyOutput(mode === 'test' ? 'Testing…' : 'Running…', '')
   await nextTick()
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve)
+    })
+  })
 
   try {
     const res = await authedFetch(`/api/data-sources/${editingId.value}/run`, {
@@ -1459,6 +1464,11 @@ async function runSource(row, mode) {
   error.value = ''
   notice.value = mode === 'test' ? 'Testing…' : 'Running…'
   await nextTick()
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve)
+    })
+  })
   try {
     const res = await authedFetch(`/api/data-sources/${row.id}/run`, {
       method: 'POST',

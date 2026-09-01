@@ -108,8 +108,19 @@ async function exportPostgres(ctx) {
 
   await client.connect()
   try {
-    const written = await insertRowsBatch(table, rows, 'postgres', (sql, params) => client.query(sql, params))
-    return { rows: [], rowsWritten: written, meta: { table, rowCount: written } }
+    const onConflict = String(config.onConflict || '').toLowerCase() === 'skip' ? 'skip' : 'error'
+    const written = await insertRowsBatch(
+      table,
+      rows,
+      'postgres',
+      (sql, params) => client.query(sql, params),
+      { onConflict },
+    )
+    return {
+      rows: [],
+      rowsWritten: written,
+      meta: { table, rowCount: written, onConflict },
+    }
   }
   finally {
     await client.end()

@@ -37,6 +37,36 @@ export function migrationIngestTable(projectKey, entityKey, layer = 'raw') {
 }
 
 /**
+ * Derive connector runner table/query config from a migration stage entity reference.
+ * Used when materializing Data Flows so MySQL/Postgres/etc. have a table to read/write.
+ *
+ * @param {string} entityRef sourceEntity or destinationEntity (e.g. "Users", "rt.Users", "SELECT …")
+ * @param {string} [entityKey] fallback entity key
+ * @returns {{ table?: string, query?: string }}
+ */
+export function resolveRunnerTableConfig(entityRef, entityKey = '') {
+  const raw = String(entityRef || '').trim()
+  if (/^select\s/i.test(raw)) {
+    return { query: raw }
+  }
+  // Keep original casing (MySQL table names are often PascalCase, e.g. Users).
+  const table = raw.replace(/[;\s]+$/g, '').trim()
+  if (table && /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)?$/.test(table)) {
+    return { table }
+  }
+  // If ref looks like "schema.table more junk", take the first token that looks like an ident path
+  const token = table.split(/\s+/)[0] || ''
+  if (token && /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)?$/.test(token)) {
+    return { table: token }
+  }
+  const fallback = String(entityKey || '').trim()
+  if (fallback && /^[a-zA-Z0-9_]+$/.test(fallback)) {
+    return { table: fallback }
+  }
+  return {}
+}
+
+/**
  * @param {unknown} raw
  */
 export function normalizeFieldMapping(raw) {
@@ -52,6 +82,12 @@ export function normalizeFieldMapping(raw) {
     cast: m.cast ? String(m.cast).trim() : '',
     mapValues: m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : null,
     template: m.template ? String(m.template) : '',
+    constantValue: m.constantValue !== undefined
+      ? m.constantValue
+      : (m.constant !== undefined ? m.constant : undefined),
+    ifNullValue: m.ifNullValue !== undefined
+      ? m.ifNullValue
+      : (m.if_null_value !== undefined ? m.if_null_value : undefined),
     required: Boolean(m.required),
     notes: m.notes ? String(m.notes).slice(0, 500) : '',
   }
@@ -122,6 +158,21 @@ export function normalizePlanConfig(raw) {
       }))
       : [],
     connectorNeeds: Array.isArray(plan.connectorNeeds) ? plan.connectorNeeds : [],
+    constraintChecklist: Array.isArray(plan.constraintChecklist)
+      ? plan.constraintChecklist.slice(0, 50).map((c) => ({
+        entityKey: cleanEntityKey(c?.entityKey ?? c?.entity_key),
+        destinationTable: String(c?.destinationTable || c?.destination_table || '').trim(),
+        requiredColumns: Array.isArray(c?.requiredColumns)
+          ? c.requiredColumns.map(String).slice(0, 80)
+          : [],
+        mitigations: Array.isArray(c?.mitigations)
+          ? c.mitigations.map(String).slice(0, 40)
+          : [],
+        residualRisks: Array.isArray(c?.residualRisks)
+          ? c.residualRisks.map(String).slice(0, 40)
+          : [],
+      }))
+      : [],
     approved: Boolean(plan.approved),
   }
 }

@@ -574,17 +574,41 @@
               class="field-input"
               @change="emitUpdate"
             >
+              <option value="null">If null</option>
               <option value="null_or_empty">Null or empty</option>
-              <option value="null">Null only</option>
               <option value="empty">Empty string only</option>
+              <option value="always">Always overwrite</option>
             </select>
             <label class="block text-[10px] text-[var(--mute)]">Default value</label>
+            <select
+              v-if="defaultValueOptions(action).length"
+              :value="formatDefaultValue(action.value)"
+              class="field-input"
+              @change="onDefaultValueSelect(action, $event.target.value)"
+            >
+              <option value="" disabled>Select value…</option>
+              <option
+                v-for="opt in defaultValueOptions(action)"
+                :key="String(opt.value)"
+                :value="String(opt.value)"
+              >
+                {{ opt.label }}
+              </option>
+            </select>
             <input
-              v-model="action.value"
+              v-else
+              :value="formatDefaultValue(action.value)"
               type="text"
               class="field-input"
-              @input="emitUpdate"
+              :placeholder="defaultValuePlaceholder(action)"
+              @input="onDefaultValueInput(action, $event.target.value)"
             >
+            <p
+              v-if="defaultValueHint(action)"
+              class="text-[10px] text-[var(--mute-soft)]"
+            >
+              {{ defaultValueHint(action) }}
+            </p>
           </template>
 
           <template v-else-if="action.op === 'template'">
@@ -803,6 +827,11 @@
 
 <script setup>
 import { previewTransformRow } from '~~/shared/pipelineTransform.js'
+import {
+  coerceHintValue,
+  formatMappingValue,
+  getFieldHintByName,
+} from '~~/shared/destinationFieldHints.js'
 
 const props = defineProps({
   modelValue: { type: Object, default: () => ({}) },
@@ -1200,6 +1229,59 @@ function onAddDropField(action, event) {
  */
 function removeDropField(action, fi) {
   action.fields.splice(fi, 1)
+  emitUpdate()
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ */
+function defaultFieldHint(action) {
+  return getFieldHintByName(String(action.field || ''))
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ */
+function defaultValueOptions(action) {
+  return defaultFieldHint(action)?.options || []
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ */
+function defaultValuePlaceholder(action) {
+  return defaultFieldHint(action)?.placeholder || 'static value'
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ */
+function defaultValueHint(action) {
+  return defaultFieldHint(action)?.hint || ''
+}
+
+/**
+ * @param {unknown} value
+ */
+function formatDefaultValue(value) {
+  return formatMappingValue(value)
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ * @param {string} raw
+ */
+function onDefaultValueSelect(action, raw) {
+  action.value = coerceHintValue(raw, defaultFieldHint(action))
+  emitUpdate()
+}
+
+/**
+ * @param {Record<string, unknown>} action
+ * @param {string} raw
+ */
+function onDefaultValueInput(action, raw) {
+  action.value = coerceHintValue(raw, defaultFieldHint(action))
   emitUpdate()
 }
 

@@ -20,9 +20,13 @@ export default defineEventHandler(async (event) => {
 
   const proposed = await proposeMigrationPlan({
     description: body?.description || project.description || project.name,
+    operatorNotes: body?.operatorNotes || body?.notes || '',
     sourceSummary: body?.sourceSummary || planConfig.sourceSummary,
     destinationSummary: body?.destinationSummary || planConfig.destinationSummary,
+    sourceSystemId: body?.sourceSystemId || planConfig.sourceSystemId,
+    destinationSystemId: body?.destinationSystemId || planConfig.destinationSystemId,
     docsUrl: body?.docsUrl,
+    docsUrls: body?.docsUrls,
     entities: planConfig.entities,
   })
 
@@ -56,6 +60,13 @@ export default defineEventHandler(async (event) => {
     stages = data || []
   }
 
+  const docsUrls = Array.isArray(body?.docsUrls)
+    ? body.docsUrls
+    : String(body?.docsUrl || '')
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+
   const { data: updated, error: updateError } = await admin
     .from('migration_projects')
     .update({
@@ -63,7 +74,12 @@ export default defineEventHandler(async (event) => {
       plan_config: {
         ...planConfig,
         ...proposed.planConfig,
+        sourceSystemId: planConfig.sourceSystemId || proposed.planConfig.sourceSystemId,
+        destinationSystemId: planConfig.destinationSystemId || proposed.planConfig.destinationSystemId,
         aiNotes: proposed.generationNotes || proposed.planConfig?.aiNotes || '',
+        constraintChecklist: proposed.planConfig?.constraintChecklist || [],
+        operatorNotes: String(body?.operatorNotes || body?.notes || planConfig.operatorNotes || '').trim(),
+        docsUrls,
       },
     })
     .eq('id', id)

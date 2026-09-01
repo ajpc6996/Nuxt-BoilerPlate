@@ -21,6 +21,7 @@ export const TRANSFORM_OPS = [
   'rename',
   'copy',
   'drop',
+  'keep',
   'cast',
   'default',
   'template',
@@ -35,7 +36,7 @@ export const CASE_STYLES = ['camel', 'snake', 'kebab', 'pascal', 'lower', 'upper
 
 export const CAST_TYPES = ['string', 'number', 'boolean', 'date']
 
-export const DEFAULT_WHENS = ['null', 'empty', 'null_or_empty']
+export const DEFAULT_WHENS = ['null', 'empty', 'null_or_empty', 'always']
 
 export const CONDITIONAL_OPS = ['eq', 'neq', 'contains', 'not_contains', 'empty', 'not_empty']
 
@@ -124,6 +125,8 @@ function applyOne(row, action) {
       return applyCopy(row, action)
     case 'drop':
       return applyDrop(row, action)
+    case 'keep':
+      return applyKeep(row, action)
     case 'cast':
       return applyCast(row, action)
     case 'default':
@@ -320,8 +323,7 @@ function sanitizeFlags(flags) {
  * @param {Record<string, unknown>} action
  */
 function applyRename(row, action) {
-  const field = String(action.field || '').trim()
-  const target = String(action.targetField || '').trim()
+  const { field, target } = resolveCopyFields(action)
   if (!field || !target || field === target || !(field in row)) return row
   const next = { ...row }
   next[target] = next[field]
@@ -334,12 +336,28 @@ function applyRename(row, action) {
  * @param {Record<string, unknown>} action
  */
 function applyCopy(row, action) {
-  const field = String(action.field || '').trim()
-  const target = String(action.targetField || '').trim()
+  const { field, target } = resolveCopyFields(action)
   if (!field || !target || !(field in row)) return row
   const next = { ...row }
   next[target] = row[field]
   return next
+}
+
+/**
+ * Resolve copy/rename source + target, including legacy { field, from } shape.
+ * @param {Record<string, unknown>} action
+ */
+function resolveCopyFields(action) {
+  const from = String(action.from || '').trim()
+  const field = String(action.field || '').trim()
+  const targetField = String(action.targetField || '').trim()
+  if (targetField) {
+    return { field, target: targetField }
+  }
+  if (from && field) {
+    return { field: from, target: field }
+  }
+  return { field, target: targetField }
 }
 
 /**
@@ -357,6 +375,29 @@ function applyDrop(row, action) {
   fields.forEach((f) => {
     delete next[f]
   })
+  return next
+}
+
+/**
+ * Keep only listed fields (used by migration map stages so export does not
+ * insert unmapped source columns like RT "Zip" into destination tables).
+ * @param {Record<string, unknown>} row
+ * @param {Record<string, unknown>} action
+ */
+function applyKeep(row, action) {
+  const fields = Array.isArray(action.fields)
+    ? action.fields.map((f) => String(f || '').trim()).filter(Boolean)
+    : String(action.field || '').trim()
+      ? [String(action.field).trim()]
+      : []
+  if (!fields.length) return row
+  /** @type {Record<string, unknown>} */
+  const next = {}
+  for (const f of fields) {
+    if (Object.prototype.hasOwnProperty.call(row, f)) {
+      next[f] = row[f]
+    }
+  }
   return next
 }
 
@@ -424,13 +465,30 @@ function applyDefault(row, action) {
   const isNull = current == null
   const isEmpty = current === '' || (typeof current === 'string' && current.trim() === '')
   let replace = false
-  if (when === 'null') replace = isNull
+  if (when === 'always') replace = true
+  else if (when === 'null') replace = isNull
   else if (when === 'empty') replace = isEmpty
   else replace = isNull || isEmpty
   if (!replace) return row
   const next = { ...row }
-  next[field] = action.value ?? ''
+  next[field] = resolveDefaultValue(action.value)
   return next
+}
+
+/**
+ * @param {unknown} value
+ */
+function resolveDefaultValue(value) {
+  if (value === '__NOW__' || value === '{{now}}') {
+    return new Date().toISOString()
+  }
+  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
+    const n = Number(value.trim())
+    if (Number.isSafeInteger(n)) return n
+  }
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return value ?? ''
 }
 
 /**
@@ -698,7 +756,11 @@ export function validateTransformConfig(data, nodeId) {
       }
     }
     if (op === 'rename' || op === 'copy') {
-      if (!String(a.field || '').trim() || !String(a.targetField || '').trim()) {
+      // Canonical: { field: source, targetField: dest }
+      // Legacy migration shape: { field: dest, from: source }
+      const hasCanonical = String(a.field || '').trim() && String(a.targetField || '').trim()
+      const hasLegacyFrom = String(a.from || '').trim() && String(a.field || '').trim()
+      if (!hasCanonical && !hasLegacyFrom) {
         return `Transform “${nodeId}” ${op} step ${i + 1} needs field and target`
       }
     }
@@ -706,6 +768,12 @@ export function validateTransformConfig(data, nodeId) {
       const fields = Array.isArray(a.fields) ? a.fields.filter(Boolean) : []
       if (!fields.length && !String(a.field || '').trim()) {
         return `Transform “${nodeId}” drop step ${i + 1} needs fields`
+      }
+    }
+    if (op === 'keep') {
+      const fields = Array.isArray(a.fields) ? a.fields.filter(Boolean) : []
+      if (!fields.length && !String(a.field || '').trim()) {
+        return `Transform “${nodeId}” keep step ${i + 1} needs fields`
       }
     }
     if (op === 'cast') {

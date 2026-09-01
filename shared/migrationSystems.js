@@ -186,6 +186,218 @@ export function getMigrationSystem(id) {
 }
 
 /**
+ * Known NOT NULL / audit defaults for destination systems (applied when missing from mappings).
+ * `__NOW__` is resolved at transform runtime to an ISO timestamp.
+ * `force: true` replaces any existing mapping to that destination (fixes bad AI maps like SortOrder→active).
+ * @type {Record<string, Record<string, Array<{ destination: string, constantValue: unknown, required?: boolean, force?: boolean }>>>}
+ */
+export const SYSTEM_DESTINATION_DEFAULTS = {
+  zammad: {
+    users: [
+      { destination: 'created_by_id', constantValue: 1, required: true },
+      { destination: 'updated_by_id', constantValue: 1, required: true },
+      { destination: 'created_at', constantValue: '__NOW__', required: true },
+      { destination: 'updated_at', constantValue: '__NOW__', required: true },
+      { destination: 'active', constantValue: true, required: false, force: true },
+    ],
+    groups: [
+      { destination: 'created_by_id', constantValue: 1, required: true },
+      { destination: 'updated_by_id', constantValue: 1, required: true },
+      { destination: 'created_at', constantValue: '__NOW__', required: true },
+      { destination: 'updated_at', constantValue: '__NOW__', required: true },
+      // Booleans — never accept RT SortOrder/ids (e.g. "2") into these columns
+      { destination: 'active', constantValue: true, required: false, force: true },
+      { destination: 'shared_drafts', constantValue: true, required: false, force: true },
+      { destination: 'follow_up_assignment', constantValue: true, required: false, force: true },
+      { destination: 'follow_up_possible', constantValue: 'yes', required: false },
+    ],
+    tickets: [
+      { destination: 'created_by_id', constantValue: 1, required: true },
+      { destination: 'updated_by_id', constantValue: 1, required: true },
+      { destination: 'created_at', constantValue: '__NOW__', required: true },
+      { destination: 'updated_at', constantValue: '__NOW__', required: true },
+      // Required FKs — only when missing (status/priority maps may fill these)
+      { destination: 'group_id', constantValue: 1, required: true },
+      { destination: 'customer_id', constantValue: 1, required: true },
+      { destination: 'owner_id', constantValue: 1, required: false },
+      { destination: 'state_id', constantValue: 2, required: true },
+      { destination: 'priority_id', constantValue: 2, required: true },
+    ],
+    articles: [
+      { destination: 'created_by_id', constantValue: 1, required: true },
+      { destination: 'updated_by_id', constantValue: 1, required: true },
+      { destination: 'created_at', constantValue: '__NOW__', required: true },
+      { destination: 'updated_at', constantValue: '__NOW__', required: true },
+    ],
+  },
+}
+
+/** Map source-side entity keys to destination catalog keys for defaults. */
+export const SYSTEM_DESTINATION_ENTITY_ALIASES = {
+  zammad: {
+    queues: 'groups',
+    queue: 'groups',
+    group: 'groups',
+    transactions: 'articles',
+    transaction: 'articles',
+    article: 'articles',
+    ticket: 'tickets',
+    user: 'users',
+  },
+}
+export const SYSTEM_BOOLEAN_DESTINATIONS = {
+  zammad: new Set([
+    'active',
+    'shared_drafts',
+    'follow_up_assignment',
+    'out_of_office',
+    'vip',
+  ]),
+}
+
+/**
+ * Default Zammad ticket_states ids (fresh install). Custom statuses need operator map overrides.
+ * Used when RT Status *names* (e.g. "approved") are mapped into integer state_id.
+ */
+export const ZAMMAD_TICKET_STATE_NAME_MAP = {
+  new: 1,
+  open: 2,
+  stalled: 3,
+  pending: 3,
+  'pending reminder': 3,
+  'pending close': 6,
+  waiting: 3,
+  resolved: 4,
+  closed: 4,
+  rejected: 4,
+  deleted: 4,
+  merged: 5,
+  approved: 2,
+  approval: 2,
+  'in progress': 2,
+  working: 2,
+}
+
+/** RT priority labels / common ranks → default Zammad ticket_priorities (1 low, 2 normal, 3 high). */
+export const ZAMMAD_TICKET_PRIORITY_NAME_MAP = {
+  low: 1,
+  lowest: 1,
+  normal: 2,
+  medium: 2,
+  high: 3,
+  highest: 3,
+  '0': 1,
+  '1': 1,
+  '2': 2,
+  '3': 3,
+  '4': 3,
+  '5': 3,
+}
+
+/**
+ * @param {string} dest
+ * @param {Set<string> | undefined} boolDest
+ */
+export function isIntegerDestinationField(dest, boolDest) {
+  const d = String(dest || '').trim().toLowerCase()
+  if (!d || boolDest?.has(d)) return false
+  if (d === 'id' || d.endsWith('_id')) return true
+  return ['article_count', 'time_unit', 'assignment_timeout', 'reopen_time_in_days'].includes(d)
+}
+
+/**
+ * Upgrade Status/Priority name copies into map transforms so Postgres never sees "approved" in state_id.
+ * @param {string} systemId
+ * @param {string} entityKey
+ * @param {Array<Record<string, unknown>>} mappings
+ */
+export function enrichMappingsWithLookupMaps(systemId, entityKey, mappings) {
+  const system = String(systemId || '').trim().toLowerCase()
+  let entity = String(entityKey || '').trim().toLowerCase()
+  entity = SYSTEM_DESTINATION_ENTITY_ALIASES[system]?.[entity] || entity
+  if (system !== 'zammad' || entity !== 'tickets') {
+    return Array.isArray(mappings) ? mappings : []
+  }
+
+  return (Array.isArray(mappings) ? mappings : []).map((m) => {
+    const dest = String(m?.destination || '').trim().toLowerCase()
+    const transform = String(m?.transform || m?.op || 'copy').trim()
+    if (transform === 'constant') return m
+
+    if (dest === 'state_id') {
+      const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
+      return {
+        ...m,
+        transform: 'map',
+        mapValues: { ...ZAMMAD_TICKET_STATE_NAME_MAP, ...existing },
+        constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
+          ? m.constantValue
+          : 2,
+        notes: m.notes || 'RT status names → Zammad state_id (default open=2)',
+      }
+    }
+
+    if (dest === 'priority_id') {
+      const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
+      return {
+        ...m,
+        transform: 'map',
+        mapValues: { ...ZAMMAD_TICKET_PRIORITY_NAME_MAP, ...existing },
+        constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
+          ? m.constantValue
+          : 2,
+        notes: m.notes || 'RT priority → Zammad priority_id (default normal=2)',
+      }
+    }
+
+    return m
+  })
+}
+
+/**
+ * Merge system-required constant destination fields into mappings when absent.
+ * @param {string} systemId
+ * @param {string} entityKey
+ * @param {Array<Record<string, unknown>>} mappings
+ */
+export function enrichMappingsWithSystemDefaults(systemId, entityKey, mappings) {
+  let list = Array.isArray(mappings) ? [...mappings] : []
+  const system = String(systemId || '').trim().toLowerCase()
+  let entity = String(entityKey || '').trim().toLowerCase()
+  entity = SYSTEM_DESTINATION_ENTITY_ALIASES[system]?.[entity] || entity
+  const defaults = SYSTEM_DESTINATION_DEFAULTS[system]?.[entity]
+  if (!defaults?.length) return list
+
+  const destKey = (m) => String(m?.destination || '').trim().toLowerCase()
+
+  for (const d of defaults) {
+    const dest = String(d.destination || '').trim()
+    if (!dest) continue
+    const key = dest.toLowerCase()
+
+    if (d.force) {
+      list = list.filter((m) => destKey(m) !== key)
+    }
+    else if (list.some((m) => destKey(m) === key)) {
+      continue
+    }
+
+    list.push({
+      id: `sys_${system}_${entity}_${dest}`,
+      sources: [],
+      destination: dest,
+      transform: 'constant',
+      constantValue: d.constantValue,
+      required: Boolean(d.required),
+      notes: d.force
+        ? `Forced constant for ${system} ${entity}.${dest} (overrides unsafe source maps)`
+        : `Auto-filled for ${system} ${entity} NOT NULL / audit column`,
+    })
+  }
+  return list
+}
+
+/**
  * @param {string} text
  * @returns {{ source: MigrationSystemDef | null, destination: MigrationSystemDef | null }}
  */

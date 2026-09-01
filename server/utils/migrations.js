@@ -139,6 +139,7 @@ export function normalizeProposedPlan(raw) {
       aiNotes: plan.aiNotes ?? plan.generation_notes,
       entities: plan.entities,
       connectorNeeds: plan.connectorNeeds,
+      constraintChecklist: plan.constraintChecklist ?? plan.constraint_checklist,
       approved: false,
     }),
     stages,
