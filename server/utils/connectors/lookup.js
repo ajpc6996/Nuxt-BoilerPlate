@@ -68,18 +68,14 @@ export async function fetchLookupTuples(admin, opts) {
   }
 
   const columns = bindings.map((b) => assertIngestIdent(b.column, 'lookup column'))
-  const { data, error } = await admin.rpc('ingest_lookup_distinct', {
-    p_table: table,
-    p_columns: columns,
-    p_organization_id: opts.organizationId,
-    p_limit: opts.limit,
+  const { getIngestBackend } = await import('~~/server/utils/ingestBackend.js')
+  const ingestBackend = await getIngestBackend(admin, opts.organizationId)
+  const rows = await ingestBackend.ingestLookupDistinct({
+    table,
+    columns,
+    organizationId: opts.organizationId,
+    limit: opts.limit,
   })
-
-  if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
-  }
-
-  const rows = Array.isArray(data) ? data : []
   return rows.map((row) => {
     /** @type {Record<string, string>} */
     const values = {}

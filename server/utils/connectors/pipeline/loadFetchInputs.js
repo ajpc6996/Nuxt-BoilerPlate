@@ -129,20 +129,16 @@ async function loadOneFetch(node, opts) {
  */
 async function readLastIngest(child) {
   const admin = useSupabaseAdmin()
-  const { data, error } = await admin.rpc('ingest_read_rows', {
-    p_table: child.destination_table,
-    p_organization_id: child.organization_id,
-    p_connection_id: child.connection_id,
-    p_limit: 100000,
+  const { getIngestBackend } = await import('~~/server/utils/ingestBackend.js')
+  const ingestBackend = await getIngestBackend(admin, child.organization_id)
+
+  const rows = await ingestBackend.ingestReadRows({
+    table: child.destination_table,
+    organizationId: child.organization_id,
+    connectionId: child.connection_id,
+    limit: 100000,
   })
 
-  if (error) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: `Failed to read last ingest for “${child.name || child.destination_table}”: ${error.message}`,
-    })
-  }
-
-  if (!Array.isArray(data)) return []
-  return data.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+  if (!Array.isArray(rows)) return []
+  return rows.filter((row) => row && typeof row === 'object' && !Array.isArray(row))
 }

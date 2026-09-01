@@ -7,6 +7,7 @@ import {
   normalizeLicenceFeatures,
   normalizeLicenceLimits,
 } from '~~/shared/licence.js'
+import { getIngestBackend } from '~~/server/utils/ingestBackend.js'
 
 /**
  * @returns {string}
@@ -590,16 +591,8 @@ export async function purgeOrgRetainedData(admin, organizationId) {
     runs: 0,
   }
 
-  const { data: ingestDeleted, error: ingestError } = await admin.rpc(
-    'licence_purge_ingest_rows',
-    { p_organization_id: organizationId },
-  )
-  if (ingestError) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: ingestError.message || 'Ingest purge failed',
-    })
-  }
+  const ingestBackend = await getIngestBackend(admin, organizationId)
+  const ingestDeleted = await ingestBackend.licencePurgeIngestRows(organizationId)
   counts.ingestRows = Number(ingestDeleted) || 0
 
   const { count: auditCount, error: auditError } = await admin

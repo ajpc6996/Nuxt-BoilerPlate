@@ -71,6 +71,11 @@ export default defineNuxtConfig({
       || process.env.SUPABASE_SECRET_KEY
       || process.env.SUPABASE_SERVICE_ROLE_KEY
       || '',
+    // Local ingest warehouse backend connection (server-only).
+    // Used when organizations.ingest_backend = 'local'.
+    ingestDatabaseUrl: process.env.INGEST_DATABASE_URL
+      || process.env.LOCAL_INGEST_DATABASE_URL
+      || '',
     // LLM for connector-type generation: gemini | openai (auto if unset)
     llmProvider: process.env.LLM_PROVIDER || '',
     geminiApiKey: process.env.GEMINI_API_KEY || '',

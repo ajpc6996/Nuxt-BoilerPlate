@@ -3,6 +3,7 @@ import {
   normalizeReportQueryConfig,
   validateReportQuery,
 } from '~~/shared/report.js'
+import { getIngestBackend } from '~~/server/utils/ingestBackend.js'
 
 /**
  * Run a saved report or ad-hoc preview query.
@@ -44,25 +45,17 @@ export default defineEventHandler(async (event) => {
     Math.min(Number(body?.limit) || queryConfig.limit || 500, 10000),
   )
 
-  const { data, error } = await admin.rpc('report_run_query', {
-    p_organization_id: organizationId,
-    p_sources: queryConfig.sources,
-    p_joins: queryConfig.joins,
-    p_fields: queryConfig.fields.map((f) => ({
+  const ingestBackend = await getIngestBackend(admin, organizationId)
+  const rows = await ingestBackend.reportRunQuery({
+    organizationId,
+    sources: queryConfig.sources,
+    joins: queryConfig.joins,
+    fields: queryConfig.fields.map((f) => ({
       field: f.field,
       as: f.as,
     })),
-    p_limit: limit,
+    limit,
   })
-
-  if (error) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: error.message || 'Report query failed',
-    })
-  }
-
-  const rows = Array.isArray(data) ? data : []
   return {
     rows,
     fields: queryConfig.fields,

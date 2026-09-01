@@ -4,6 +4,7 @@ import {
   normalizeDataConfig,
   suggestedDisplayTypes,
 } from '~~/shared/dashboard.js'
+import { getIngestBackend } from '~~/server/utils/ingestBackend.js'
 
 /**
  * Run a dashboard widget query (or ad-hoc preview config).
@@ -80,39 +81,47 @@ export default defineEventHandler(async (event) => {
 
   const orderBy = runConfig.orderBy || { mode: 'none' }
 
+  const ingestBackend = await getIngestBackend(admin, organizationId)
+
   let data
-  let error
-  ;({ data, error } = await admin.rpc('dashboard_run_query', {
-    p_organization_id: organizationId,
-    p_sources: runConfig.sources,
-    p_joins: runConfig.joins,
-    p_dimensions: runConfig.dimensions,
-    p_metrics: runConfig.metrics,
-    p_filters: filters,
-    p_series_field: runConfig.seriesField,
-    p_limit: runLimit,
-    p_order_by: orderBy,
-  }))
-
-  // Older DBs without p_order_by — fall back and sort/limit in Node.
-  if (error && /could not find the function/i.test(error.message || '')) {
-    ;({ data, error } = await admin.rpc('dashboard_run_query', {
-      p_organization_id: organizationId,
-      p_sources: runConfig.sources,
-      p_joins: runConfig.joins,
-      p_dimensions: runConfig.dimensions,
-      p_metrics: runConfig.metrics,
-      p_filters: filters,
-      p_series_field: runConfig.seriesField,
-      p_limit: 5000,
-    }))
-    if (!error && Array.isArray(data)) {
-      data = applyOrderAndLimitLocally(data, runConfig, runLimit)
-    }
+  try {
+    data = await ingestBackend.dashboardRunQuery({
+      organizationId,
+      sources: runConfig.sources,
+      joins: runConfig.joins,
+      dimensions: runConfig.dimensions,
+      metrics: runConfig.metrics,
+      filters,
+      seriesField: runConfig.seriesField,
+      limit: runLimit,
+      orderBy,
+    })
   }
+  catch (err) {
+    const msg = err?.statusMessage || err?.message || String(err || '')
+    const looksLikeMissingSignature = /could not find the function/i.test(msg)
+      || (/dashboard_run_query/i.test(msg) && /does not exist/i.test(msg))
 
-  if (error) {
-    throw createError({ statusCode: 400, statusMessage: error.message })
+    // Older DBs without p_order_by — fall back and sort/limit in Node.
+    if (looksLikeMissingSignature) {
+      data = await ingestBackend.dashboardRunQuery({
+        organizationId,
+        sources: runConfig.sources,
+        joins: runConfig.joins,
+        dimensions: runConfig.dimensions,
+        metrics: runConfig.metrics,
+        filters,
+        seriesField: runConfig.seriesField,
+        limit: 5000,
+        orderBy: null,
+      })
+      if (Array.isArray(data)) {
+        data = applyOrderAndLimitLocally(data, runConfig, runLimit)
+      }
+    }
+    else {
+      throw createError({ statusCode: 400, statusMessage: msg })
+    }
   }
 
   const rows = Array.isArray(data) ? data : []

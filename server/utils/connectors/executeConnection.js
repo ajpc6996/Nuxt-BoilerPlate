@@ -11,6 +11,7 @@ import {
 import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 import { mergeConnectorConfig } from './connectorConfig.js'
 import { deliverOutboundBatch } from './deliverOutbound.js'
+import { getIngestBackend } from '~~/server/utils/ingestBackend.js'
 
 export { mergeConnectorConfig } from './connectorConfig.js'
 
@@ -177,17 +178,16 @@ export async function executeDataSource(opts) {
 
     if (mode === 'run') {
       const settings = await loadSystemSettings(admin)
-      const { error: staleError } = await admin.rpc('staged_cleanup_stale', {
-        p_ttl_minutes: settings.stageStaleTtlMinutes,
-      })
-      if (staleError) {
-        console.warn('[staged] cleanup skipped', staleError.message)
-      }
 
       const ingestNodes = pipeline.nodes.filter((n) => n.type === 'ingest')
       const exportNodes = pipeline.nodes.filter((n) => n.type === 'export')
       const hasIngest = ingestNodes.length > 0
       const hasExport = exportNodes.length > 0
+      const ingestBackend = await getIngestBackend(admin, dataSource.organization_id)
+
+      if (hasExport) {
+        await ingestBackend.stagedCleanupStale(settings.stageStaleTtlMinutes)
+      }
       const ingestCfg = ingestNodes[0]?.data || {}
       const ingestMode = hasExport
         ? 'append'
@@ -264,32 +264,36 @@ export async function executeDataSource(opts) {
           chunks = [[]]
         }
         for (let i = 0; i < chunks.length; i += 1) {
-          const fn = ingestMode === 'append' || i > 0
-            ? 'ingest_append_rows'
-            : 'ingest_replace_rows'
-          const { data: written, error: ingestError } = await admin.rpc(fn, {
-            p_table: dataSource.destination_table,
-            p_organization_id: dataSource.organization_id,
-            p_connection_id: connection.id,
-            p_run_id: run.id,
-            p_rows: chunks[i],
-            p_cycle_time: cycleTime,
-          })
-          if (ingestError) {
-            throw createError({
-              statusCode: 500,
-              statusMessage: ingestError.message,
+          if (ingestMode === 'append' || i > 0) {
+            const written = await ingestBackend.ingestAppendRows({
+              table: dataSource.destination_table,
+              organizationId: dataSource.organization_id,
+              connectionId: connection.id,
+              runId: run.id,
+              rows: chunks[i],
+              cycleTime,
             })
+            rowsWritten += Number(written) || 0
           }
-          rowsWritten += Number(written) || 0
+          else {
+            const written = await ingestBackend.ingestReplaceRows({
+              table: dataSource.destination_table,
+              organizationId: dataSource.organization_id,
+              connectionId: connection.id,
+              runId: run.id,
+              rows: chunks[i],
+              cycleTime,
+            })
+            rowsWritten += Number(written) || 0
+          }
         }
 
         if (ingestMode === 'append') {
-          const { data: cleaned } = await admin.rpc('ingest_cleanup_expired', {
-            p_table: dataSource.destination_table,
-            p_organization_id: dataSource.organization_id,
-            p_connection_id: connection.id,
-            p_retention_days: retentionDays,
+          const cleaned = await ingestBackend.ingestCleanupExpired({
+            table: dataSource.destination_table,
+            organizationId: dataSource.organization_id,
+            connectionId: connection.id,
+            retentionDays,
           })
           expiredCleaned = Number(cleaned) || 0
         }
@@ -328,39 +332,24 @@ export async function executeDataSource(opts) {
         const chunks = chunkRowsForStage(exportRows, caps)
         const dualSink = hasIngest
         for (let i = 0; i < chunks.length; i += 1) {
-          const { data: live } = await admin.rpc('staged_count_org', {
-            p_organization_id: dataSource.organization_id,
-          })
-          const liveCount = Number(live) || 0
+          const liveCount = Number(await ingestBackend.stagedCountOrg(dataSource.organization_id)) || 0
           if (liveCount + chunks[i].length > settings.maxConcurrentStageRowsPerOrg) {
             throw createError({
               statusCode: 429,
               statusMessage: `Temp Stage cap reached (${liveCount}/${settings.maxConcurrentStageRowsPerOrg} live rows). Wait for stale TTL or raise the platform cap.`,
             })
           }
-          const { data: stagedCount, error: stagedError } = await admin.rpc(
-            'staged_append_rows',
-            {
-              p_organization_id: dataSource.organization_id,
-              p_connection_id: exportConnectionId,
-              p_data_source_id: dataSource.id,
-              p_run_id: run.id,
-              p_batch_no: i,
-              p_rows: chunks[i],
-            },
-          )
-          if (stagedError) {
-            throw createError({
-              statusCode: 500,
-              statusMessage: stagedError.message,
-            })
-          }
+          const stagedCount = await ingestBackend.stagedAppendRows({
+            organizationId: dataSource.organization_id,
+            connectionId: exportConnectionId,
+            dataSourceId: dataSource.id,
+            runId: run.id,
+            batchNo: i,
+            rows: chunks[i],
+          })
           stagedWritten += Number(stagedCount) || 0
           if (dualSink) {
-            await admin.rpc('staged_delete_batch', {
-              p_run_id: run.id,
-              p_batch_no: i,
-            })
+            await ingestBackend.stagedDeleteBatch({ runId: run.id, batchNo: i })
             stagedReleased += chunks[i].length
           }
 
@@ -374,7 +363,7 @@ export async function executeDataSource(opts) {
           outboundWritten += delivered.rowsWritten
         }
         if (dualSink) {
-          await admin.rpc('staged_delete_run', { p_run_id: run.id })
+          await ingestBackend.stagedDeleteRun({ runId: run.id })
         }
       }
     }
