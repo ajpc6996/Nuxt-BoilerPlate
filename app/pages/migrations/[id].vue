@@ -59,17 +59,70 @@
 
     <div
       v-if="busyMessage"
-      class="sticky top-0 z-30 mt-6 flex items-center gap-3 rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink)] shadow-lg"
+      class="sticky top-0 z-30 mt-6 flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--accent)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink)] shadow-lg"
       role="status"
       aria-live="assertive"
       aria-busy="true"
     >
-      <span
-        class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
-        aria-hidden="true"
-      />
-      <span class="font-medium">{{ busyMessage }}</span>
-      <span class="ml-auto text-xs text-[var(--mute)]">Please wait — actions are locked</span>
+      <div class="flex items-center gap-3">
+        <span
+          class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+          aria-hidden="true"
+        />
+        <span class="font-medium">{{ busyMessage }}</span>
+        <span class="ml-auto text-xs text-[var(--mute)]">Please wait — actions are locked</span>
+      </div>
+
+      <div
+        v-if="runProgress.active && runProgress.steps.length"
+        class="space-y-2 border-t border-[var(--border-soft)] pt-3"
+      >
+        <div class="flex items-center justify-between text-xs text-[var(--mute)]">
+          <span>Stage {{ runProgressCurrentNumber }} of {{ runProgress.steps.length }}</span>
+          <span>{{ runProgressPercent }}%</span>
+        </div>
+        <div class="h-1.5 overflow-hidden rounded-full bg-[var(--surface)]">
+          <div
+            class="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
+            :style="{ width: `${runProgressPercent}%` }"
+          />
+        </div>
+        <ul class="max-h-48 space-y-1 overflow-y-auto text-xs">
+          <li
+            v-for="(step, idx) in runProgress.steps"
+            :key="step.id"
+            class="flex items-center gap-2 rounded px-2 py-1"
+            :class="step.status === 'running'
+              ? 'bg-[var(--accent-soft)] text-[var(--accent-ink)]'
+              : step.status === 'failed'
+                ? 'text-[var(--danger)]'
+                : step.status === 'done'
+                  ? 'text-emerald-300'
+                  : 'text-[var(--mute)]'"
+          >
+            <span
+              class="inline-flex h-4 w-4 shrink-0 items-center justify-center"
+              aria-hidden="true"
+            >
+              <span
+                v-if="step.status === 'running'"
+                class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+              />
+              <span v-else-if="step.status === 'done'">✓</span>
+              <span v-else-if="step.status === 'failed'">✕</span>
+              <span v-else>{{ idx + 1 }}</span>
+            </span>
+            <span class="min-w-0 flex-1 truncate">
+              {{ step.name }}
+              <span
+                v-if="step.entityKey"
+                class="font-mono text-[var(--mute-soft)]"
+              > · {{ step.entityKey }}</span>
+            </span>
+            <span class="shrink-0 capitalize">{{ step.stageType }}</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <p
@@ -164,17 +217,73 @@
             AI migration plan
           </h2>
           <p class="mt-1 text-sm text-[var(--mute)]">
-            Proposes extract → transform (dual-sink) → validate stages per entity.
+            Proposes extract → transform (dual-sink) → validate stages per entity (plan v2).
             You will be asked for extra guidance and documentation links before generation.
           </p>
-          <button
-            type="button"
-            class="btn-primary mt-4 !px-4 !py-2 text-sm"
-            :disabled="pageBusy"
-            @click="openProposeDialog"
+          <p
+            v-if="planVersion"
+            class="mt-2 text-xs font-mono text-[var(--accent-ink)]"
           >
-            {{ proposing ? 'Generating…' : 'Generate plan with AI' }}
-          </button>
+            Plan version {{ planVersion }}
+          </p>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="btn-primary !px-4 !py-2 text-sm"
+              :disabled="pageBusy"
+              @click="openProposeDialog"
+            >
+              {{ proposing ? 'Generating…' : 'Generate plan with AI' }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy || !stages.length"
+              @click="introspectSchemas"
+            >
+              {{ introspecting ? 'Introspecting…' : 'Introspect schemas' }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy || !stages.length"
+              @click="validatePlan"
+            >
+              {{ validating ? 'Validating…' : 'Validate plan' }}
+            </button>
+          </div>
+          <div
+            v-if="validationResult"
+            class="mt-4 rounded-md border px-3 py-3 text-sm"
+            :class="validationResult.valid
+              ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]'
+              : 'border-[var(--danger)] bg-[var(--surface)] text-[var(--danger)]'"
+          >
+            <p class="font-medium">
+              {{ validationResult.valid ? 'Plan validation passed' : 'Plan validation failed' }}
+              <span class="ml-2 font-normal text-[var(--mute)]">
+                ({{ validationResult.summary?.errorCount || 0 }} errors,
+                {{ validationResult.summary?.warningCount || 0 }} warnings)
+              </span>
+            </p>
+            <ul
+              v-if="validationIssues.length"
+              class="mt-2 max-h-48 space-y-2 overflow-y-auto text-xs"
+            >
+              <li
+                v-for="issue in validationIssues"
+                :key="issue.id"
+                :class="issue.severity === 'error' ? 'text-[var(--danger)]' : 'text-[var(--mute)]'"
+              >
+                <span class="font-mono">[{{ issue.code }}]</span>
+                {{ issue.message }}
+                <span
+                  v-if="issue.hint"
+                  class="block text-[var(--mute-soft)]"
+                >{{ issue.hint }}</span>
+              </li>
+            </ul>
+          </div>
           <p
             v-if="planNotes"
             class="mt-4 whitespace-pre-wrap text-sm text-[var(--mute)]"
@@ -349,6 +458,15 @@
               @click="confirmFullRun"
             >
               {{ runningMode === 'full' ? 'Full run in progress…' : 'Full run' }}
+            </button>
+            <button
+              v-if="runs.length"
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy || clearingRuns"
+              @click="clearRunHistory"
+            >
+              {{ clearingRuns ? 'Clearing…' : 'Clear run history' }}
             </button>
           </div>
         </div>
@@ -600,9 +718,19 @@ const capabilityStatus = ref(null)
 
 const saving = ref(false)
 const proposing = ref(false)
+const validating = ref(false)
+const introspecting = ref(false)
+const validationResult = ref(null)
 const materializing = ref(false)
 const running = ref(false)
 const runningMode = ref('')
+const clearingRuns = ref(false)
+const runProgress = ref({
+  active: false,
+  mode: '',
+  steps: [],
+  currentIndex: -1,
+})
 const savingStageId = ref('')
 const expandedRunId = ref(null)
 const proposeDialogOpen = ref(false)
@@ -615,6 +743,8 @@ const pageBusy = computed(() =>
   Boolean(
     saving.value
     || proposing.value
+    || validating.value
+    || introspecting.value
     || materializing.value
     || running.value
     || savingStageId.value,
@@ -622,8 +752,18 @@ const pageBusy = computed(() =>
 )
 
 const busyMessage = computed(() => {
+  if (validating.value) return 'Validating migration plan…'
+  if (introspecting.value) return 'Introspecting source and destination schemas…'
   if (proposing.value) return 'Generating AI migration plan… This can take a while.'
   if (materializing.value) return 'Materializing data flows from stages…'
+  if (runProgress.value.active) {
+    const step = runProgress.value.steps[runProgress.value.currentIndex]
+    const label = runProgress.value.mode || runningMode.value || 'run'
+    if (step?.name) {
+      return `${label} run: ${step.name}${step.entityKey ? ` (${step.entityKey})` : ''}…`
+    }
+    return `${label} run in progress…`
+  }
   if (runningMode.value === 'sample') return 'Sample run in progress…'
   if (runningMode.value === 'pilot') return 'Pilot run in progress…'
   if (runningMode.value === 'full') return 'Full migration run in progress…'
@@ -632,6 +772,28 @@ const busyMessage = computed(() => {
   if (savingStageId.value) return 'Saving field mappings…'
   return ''
 })
+
+const runProgressCurrentNumber = computed(() => {
+  if (!runProgress.value.active || runProgress.value.currentIndex < 0) return 0
+  return runProgress.value.currentIndex + 1
+})
+
+const runProgressPercent = computed(() => {
+  const total = runProgress.value.steps.length
+  if (!total || runProgress.value.currentIndex < 0) return 0
+  const done = runProgress.value.steps.filter((step) => step.status === 'done').length
+  const runningStep = runProgress.value.steps.some((step) => step.status === 'running') ? 0.5 : 0
+  return Math.min(100, Math.round(((done + runningStep) / total) * 100))
+})
+
+/**
+ * @returns {Array<Record<string, unknown>>}
+ */
+function getRunnableStages() {
+  return (stages.value || [])
+    .filter((stage) => stage.data_source_id && stage.stage_type !== 'validate' && stage.stage_type !== 'manual')
+    .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+}
 
 /**
  * Flip busy UI immediately, then yield until the browser paints the spinner
@@ -681,6 +843,16 @@ const planNotes = computed(() => {
 const constraintChecklist = computed(() => {
   const cfg = project.value?.plan_config
   return Array.isArray(cfg?.constraintChecklist) ? cfg.constraintChecklist : []
+})
+
+const planVersion = computed(() => {
+  const cfg = project.value?.plan_config
+  return Number(cfg?.planVersion) || null
+})
+
+const validationIssues = computed(() => {
+  const list = validationResult.value?.issues
+  return Array.isArray(list) ? list : []
 })
 
 function buildPlanConfigPatch() {
@@ -809,6 +981,7 @@ const load = async () => {
       : {}
     form.sourceSystemId = cfg.sourceSystemId || 'custom'
     form.destinationSystemId = cfg.destinationSystemId || 'custom'
+    validationResult.value = cfg.lastValidation || null
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Load failed'
@@ -883,6 +1056,7 @@ const proposePlan = async () => {
     })
     project.value = res.item
     stages.value = res.stages || []
+    validationResult.value = res.item?.plan_config?.lastValidation || null
     proposeDialogOpen.value = false
     notice.value = 'AI plan applied. Review constraint checklist, stages, and mappings, then materialize.'
     activeTab.value = 'plan'
@@ -917,6 +1091,61 @@ function openProposeDialog() {
   proposeDialogOpen.value = true
 }
 
+const validatePlan = async () => {
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    validating.value = true
+  })
+  try {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/validate-plan`, {
+      method: 'POST',
+      body: { organizationId: activeOrganization.value.id, persist: true },
+    })
+    validationResult.value = res
+    project.value = {
+      ...project.value,
+      plan_config: {
+        ...(project.value?.plan_config || {}),
+        lastValidation: res,
+      },
+    }
+    notice.value = res.valid
+      ? 'Plan validation passed. You can materialize flows.'
+      : `Plan validation failed (${res.summary?.errorCount || 0} errors).`
+    if (!res.valid) error.value = notice.value
+    else error.value = ''
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Validation failed'
+    if (err?.data?.data) validationResult.value = err.data.data
+  }
+  finally {
+    validating.value = false
+  }
+}
+
+const introspectSchemas = async () => {
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  await beginBusy(() => {
+    introspecting.value = true
+  })
+  try {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/introspect-schema`, {
+      method: 'POST',
+      body: { organizationId: activeOrganization.value.id },
+    })
+    project.value = res.item
+    notice.value = 'Schemas introspected from connections. Run Validate plan next.'
+    activeTab.value = 'plan'
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Schema introspection failed'
+  }
+  finally {
+    introspecting.value = false
+  }
+}
+
 const materialize = async () => {
   if (!activeOrganization.value?.id || pageBusy.value) return
   await beginBusy(() => {
@@ -932,7 +1161,14 @@ const materialize = async () => {
     notice.value = 'Data flows created/updated for each stage.'
   }
   catch (err) {
-    error.value = err?.data?.statusMessage || err?.message || 'Materialize failed'
+    const validation = err?.data?.data
+    if (validation?.issues?.length) {
+      validationResult.value = validation
+      error.value = err?.data?.statusMessage || 'Plan validation failed — fix issues before materializing.'
+    }
+    else {
+      error.value = err?.data?.statusMessage || err?.message || 'Materialize failed'
+    }
   }
   finally {
     materializing.value = false
@@ -970,26 +1206,72 @@ const saveStage = async (stage) => {
 
 const runMigration = async (runMode) => {
   if (!activeOrganization.value?.id || pageBusy.value) return
+
+  const runnable = getRunnableStages()
+  if (!runnable.length) {
+    error.value = 'No materialized stages to run. Materialize the plan first.'
+    return
+  }
+
   await beginBusy(() => {
     running.value = true
     runningMode.value = runMode
+    runProgress.value = {
+      active: true,
+      mode: runMode,
+      currentIndex: -1,
+      steps: runnable.map((stage) => ({
+        id: stage.id,
+        name: stage.name,
+        entityKey: stage.entity_key || '',
+        stageType: stage.stage_type || '',
+        status: 'pending',
+      })),
+    }
   })
+
+  /** @type {string | null} */
+  let runId = null
+  /** @type {Array<Record<string, unknown>>} */
+  let allStageResults = []
+
   try {
-    const res = await authedFetch(`/api/migrations/${projectId.value}/run`, {
-      method: 'POST',
-      body: {
-        organizationId: activeOrganization.value.id,
-        runMode,
-      },
-    })
-    notice.value = `${runMode} run completed (${res.stageResults?.length || 0} stages).`
+    for (let i = 0; i < runnable.length; i += 1) {
+      const stage = runnable[i]
+      runProgress.value.currentIndex = i
+      runProgress.value.steps[i].status = 'running'
+      await nextTick()
+
+      const res = await authedFetch(`/api/migrations/${projectId.value}/run`, {
+        method: 'POST',
+        body: {
+          organizationId: activeOrganization.value.id,
+          runMode,
+          stageIds: [stage.id],
+          continueRunId: runId || undefined,
+          finalizeRun: i === runnable.length - 1,
+        },
+      })
+
+      runId = res.runId || runId
+      allStageResults = res.stageResults || allStageResults
+      runProgress.value.steps[i].status = 'done'
+    }
+
+    notice.value = `${runMode} run completed (${allStageResults.length || runnable.length} stages).`
     await load()
     activeTab.value = 'run'
+    if (runId) expandedRunId.value = runId
   }
   catch (err) {
+    const idx = runProgress.value.currentIndex
+    if (idx >= 0 && runProgress.value.steps[idx]) {
+      runProgress.value.steps[idx].status = 'failed'
+    }
+
     const failed = err?.data?.data?.failedStage || err?.data?.failedStage
     if (failed?.stageName) {
-      error.value = `Failed on data flow stage “${failed.stageName}”${failed.entityKey ? ` (${failed.entityKey})` : ''}: ${failed.error || err?.data?.statusMessage || err?.message}`
+      error.value = `Failed on stage “${failed.stageName}”${failed.entityKey ? ` (${failed.entityKey})` : ''}: ${failed.error || err?.data?.statusMessage || err?.message}`
       if (failed.hint) notice.value = failed.hint
     }
     else {
@@ -1003,6 +1285,12 @@ const runMigration = async (runMode) => {
   finally {
     running.value = false
     runningMode.value = ''
+    runProgress.value = {
+      active: false,
+      mode: '',
+      steps: [],
+      currentIndex: -1,
+    }
   }
 }
 
@@ -1015,5 +1303,33 @@ const confirmFullRun = async () => {
   })
   if (!ok) return
   await runMigration('full')
+}
+
+const clearRunHistory = async () => {
+  const ok = await confirm({
+    title: 'Clear run history?',
+    message: 'Remove all sample, pilot, and full run logs for this migration? This cannot be undone.',
+    confirmLabel: 'Clear history',
+    danger: true,
+  })
+  if (!ok || !activeOrganization.value?.id) return
+  clearingRuns.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/runs`, {
+      method: 'DELETE',
+      query: { organizationId: activeOrganization.value.id },
+    })
+    runs.value = []
+    expandedRunId.value = ''
+    notice.value = `Cleared ${res.deleted || 0} run log(s).`
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Failed to clear run history'
+  }
+  finally {
+    clearingRuns.value = false
+  }
 }
 </script>

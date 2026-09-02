@@ -49,6 +49,44 @@ export const DATE_FORMATS = [
   'MM/DD/YYYY',
 ]
 
+/**
+ * Resolve a field name on a row (exact match, then case-insensitive).
+ * @param {Record<string, unknown>} row
+ * @param {string} fieldName
+ * @returns {{ key: string, value: unknown } | null}
+ */
+export function resolveRowField(row, fieldName) {
+  const name = String(fieldName || '').trim()
+  if (!name || !row || typeof row !== 'object') return null
+  if (Object.prototype.hasOwnProperty.call(row, name)) {
+    return { key: name, value: row[name] }
+  }
+  const want = name.toLowerCase()
+  for (const key of Object.keys(row)) {
+    if (key.toLowerCase() === want) {
+      return { key, value: row[key] }
+    }
+  }
+  return null
+}
+
+/**
+ * First matching field from a list of candidate names.
+ * @param {Record<string, unknown>} row
+ * @param {string[]} fieldNames
+ * @returns {{ key: string, value: unknown, field: string } | null}
+ */
+export function resolveFirstRowField(row, fieldNames) {
+  const list = Array.isArray(fieldNames)
+    ? fieldNames.map((f) => String(f || '').trim()).filter(Boolean)
+    : []
+  for (const field of list) {
+    const resolved = resolveRowField(row, field)
+    if (resolved) return { ...resolved, field }
+  }
+  return null
+}
+
 export const MAP_FALLBACKS = ['keep', 'null', 'value']
 
 const REGEX_PATTERN_MAX = 200
@@ -336,10 +374,26 @@ function applyRename(row, action) {
  * @param {Record<string, unknown>} action
  */
 function applyCopy(row, action) {
+  const fields = Array.isArray(action.fields)
+    ? action.fields.map((f) => String(f || '').trim()).filter(Boolean)
+    : []
+
+  if (fields.length) {
+    const target = String(action.targetField || '').trim()
+    if (!target) return row
+    const resolved = resolveFirstRowField(row, fields)
+    if (!resolved) return row
+    const next = { ...row }
+    next[target] = resolved.value
+    return next
+  }
+
   const { field, target } = resolveCopyFields(action)
-  if (!field || !target || !(field in row)) return row
+  if (!field || !target) return row
+  const resolved = resolveRowField(row, field)
+  if (!resolved) return row
   const next = { ...row }
-  next[target] = row[field]
+  next[target] = resolved.value
   return next
 }
 
@@ -394,8 +448,9 @@ function applyKeep(row, action) {
   /** @type {Record<string, unknown>} */
   const next = {}
   for (const f of fields) {
-    if (Object.prototype.hasOwnProperty.call(row, f)) {
-      next[f] = row[f]
+    const resolved = resolveRowField(row, f)
+    if (resolved) {
+      next[f] = resolved.value
     }
   }
   return next
@@ -407,16 +462,17 @@ function applyKeep(row, action) {
  */
 function applyCast(row, action) {
   const field = String(action.field || '').trim()
-  if (!field || !(field in row)) return row
+  if (!field) return row
+  const resolved = resolveRowField(row, field)
+  if (!resolved) return row
   const to = CAST_TYPES.includes(action.to) ? action.to : 'string'
   const onError = action.onError === 'keep' ? 'keep' : 'null'
   const target = String(action.targetField || '').trim() || field
-  const { value, ok } = castValue(row[field], to)
+  const { value, ok } = castValue(resolved.value, to)
   const next = { ...row }
   if (ok) next[target] = value
   else if (onError === 'null') next[target] = null
-  // else keep existing target / source unchanged when writing in place
-  else if (target !== field) next[target] = row[field]
+  else if (target !== resolved.key) next[target] = resolved.value
   return next
 }
 
@@ -569,10 +625,12 @@ function matchConditional(raw, matchOp, expected) {
  */
 function applyMap(row, action) {
   const field = String(action.field || '').trim()
-  if (!field || !(field in row)) return row
+  if (!field) return row
+  const resolved = resolveRowField(row, field)
+  if (!resolved) return row
   const target = String(action.targetField || '').trim() || field
   const mapping = normalizeMapping(action.mapping)
-  const key = stringifyCell(row[field])
+  const key = stringifyCell(resolved.value)
   const next = { ...row }
   if (Object.prototype.hasOwnProperty.call(mapping, key)) {
     next[target] = mapping[key]

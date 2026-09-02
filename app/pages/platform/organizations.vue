@@ -126,6 +126,37 @@
       </div>
     </section>
 
+    <section
+      v-if="ingestStatus"
+      class="panel mt-8 p-5"
+    >
+      <h2 class="text-sm font-semibold text-[var(--ink)]">
+        Ingest warehouse (platform)
+      </h2>
+      <p class="mt-1 text-sm text-[var(--mute)]">
+        Organizations with ingest backend <span class="font-mono">local</span> route
+        <span class="font-mono">ingest.*</span> and <span class="font-mono">staged.*</span>
+        to the server’s local Postgres (<span class="font-mono">INGEST_DATABASE_URL</span>).
+        Default is hosted Supabase.
+      </p>
+      <p
+        class="mt-3 text-sm"
+        :class="ingestStatus.reachable
+          ? 'text-[var(--accent-ink)]'
+          : (ingestStatus.configured ? 'text-[var(--danger)]' : 'text-[var(--mute)]')"
+      >
+        {{ ingestStatus.message }}
+      </p>
+      <button
+        type="button"
+        class="btn-secondary mt-3 !px-3 !py-1.5 text-sm"
+        :disabled="ingestStatusBusy"
+        @click="loadIngestStatus"
+      >
+        {{ ingestStatusBusy ? 'Checking…' : 'Recheck local warehouse' }}
+      </button>
+    </section>
+
     <p
       v-if="errorMessage"
       class="mt-3 text-sm text-[var(--danger)]"
@@ -150,12 +181,23 @@
             <p class="font-medium text-[var(--ink)]">{{ org.name }}</p>
             <p class="text-sm text-[var(--mute)]">
               {{ org.slug }} · MFA {{ org.mfa_mode }}
+              · Ingest {{ org.ingest_backend || 'supabase' }}
               <span v-if="licenceMap[org.id]">
                 · {{ licenceMap[org.id].planKey }} ({{ licenceMap[org.id].status }})
               </span>
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
+            <select
+              class="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
+              :value="org.ingest_backend || 'supabase'"
+              :disabled="ingestBusyId === org.id"
+              title="Ingest warehouse backend"
+              @change="(e) => updateIngestBackend(org, e.target.value)"
+            >
+              <option value="supabase">ingest: supabase</option>
+              <option value="local">ingest: local</option>
+            </select>
             <select
               class="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)]"
               :value="org.mfa_mode"
@@ -233,6 +275,7 @@ useHead({ title: 'Platform Organizations' })
 const supabase = useSupabase()
 const authedFetch = useAuthedFetch()
 const nuxtApp = useNuxtApp()
+const { confirm } = useAppConfirm()
 const { setActiveOrganizationAsPlatform } = useOrganization()
 
 const orgs = ref([])
@@ -256,13 +299,16 @@ const busy = ref(false)
 const settingsBusy = ref(false)
 const purgeBusy = ref(false)
 const assignBusyId = ref('')
+const ingestBusyId = ref('')
+const ingestStatus = ref(null)
+const ingestStatusBusy = ref(false)
 
 const filteredOrgs = computed(() => {
   const q = listFilter.value.trim().toLowerCase()
   if (!q) return orgs.value
   return orgs.value.filter((org) => {
     const lic = licenceMap.value[org.id]
-    const hay = [org.name, org.slug, org.mfa_mode, lic?.planKey, lic?.status]
+    const hay = [org.name, org.slug, org.mfa_mode, org.ingest_backend, lic?.planKey, lic?.status]
       .map((v) => String(v || '').toLowerCase())
       .join(' ')
     return hay.includes(q)
@@ -310,10 +356,27 @@ const loadLicences = async () => {
   licenceMap.value = next
 }
 
+const loadIngestStatus = async () => {
+  ingestStatusBusy.value = true
+  try {
+    ingestStatus.value = await authedFetch('/api/platform/ingest-backend/status')
+  }
+  catch (err) {
+    ingestStatus.value = {
+      configured: false,
+      reachable: false,
+      message: err?.data?.statusMessage || err?.message || 'Failed to check local warehouse',
+    }
+  }
+  finally {
+    ingestStatusBusy.value = false
+  }
+}
+
 const load = async () => {
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, mfa_mode, created_at')
+    .select('id, name, slug, mfa_mode, ingest_backend, created_at')
     .order('name')
   if (error) {
     errorMessage.value = error.message
@@ -325,7 +388,7 @@ const load = async () => {
 
 onMounted(async () => {
   try {
-    await loadPlans()
+    await Promise.all([loadPlans(), loadIngestStatus()])
   }
   catch (err) {
     errorMessage.value = err?.data?.statusMessage || err?.message || 'Failed to load plans'
@@ -444,6 +507,43 @@ const updateMfa = async (id, mode) => {
   catch (err) {
     errorMessage.value = err?.data?.statusMessage || err?.message || 'MFA update failed'
     await load()
+  }
+}
+
+const updateIngestBackend = async (org, mode) => {
+  const next = String(mode || 'supabase').trim()
+  const prev = org.ingest_backend || 'supabase'
+  if (next === prev) return
+
+  if (next === 'local') {
+    const ok = await confirm({
+      title: 'Switch to local ingest?',
+      message: `${org.name} will read/write ingest.* and staged.* on the server’s local Postgres (INGEST_DATABASE_URL). Existing hosted ingest data for this org will not be migrated automatically.`,
+      confirmLabel: 'Use local',
+    })
+    if (!ok) {
+      await load()
+      return
+    }
+  }
+
+  ingestBusyId.value = org.id
+  errorMessage.value = ''
+  notice.value = ''
+  try {
+    await authedFetch(`/api/platform/organizations/${org.id}/ingest-backend`, {
+      method: 'PUT',
+      body: { ingestBackend: next },
+    })
+    notice.value = `Ingest backend for ${org.name} set to ${next}`
+    await load()
+  }
+  catch (err) {
+    errorMessage.value = err?.data?.statusMessage || err?.message || 'Ingest backend update failed'
+    await load()
+  }
+  finally {
+    ingestBusyId.value = ''
   }
 }
 

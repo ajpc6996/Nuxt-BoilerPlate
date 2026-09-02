@@ -4,6 +4,9 @@
 
 import { migrationIngestTable } from './migration.js'
 import {
+  compileFieldMappingsToActions,
+} from './migrationPlanV2.js'
+import {
   SYSTEM_BOOLEAN_DESTINATIONS,
   isIntegerDestinationField,
 } from './migrationSystems.js'
@@ -138,11 +141,17 @@ export function createTransformDualSinkPipeline(opts) {
 
 /**
  * Convert field mappings to Transform node actions.
- * Pipeline Transform expects { field, targetField } (not migration { sources, destination }).
- * @param {Array<{ sources?: string[], source?: string, destination: string, transform?: string, cast?: string, mapValues?: Record<string, string>, template?: string }>} mappings
- * @param {{ destinationSystemId?: string }} [opts]
+ * Uses v2 compiler when planVersion >= 2 or mappings include transformSpec.
+ * @param {Array<Record<string, unknown>>} mappings
+ * @param {{ destinationSystemId?: string, planVersion?: number }} [opts]
  */
 export function fieldMappingsToTransformActions(mappings, opts = {}) {
+  const useV2 = Number(opts.planVersion) >= 2
+    || (Array.isArray(mappings) && mappings.some((m) => m?.transformSpec || (m?.transform && typeof m.transform === 'object')))
+  if (useV2) {
+    return compileFieldMappingsToActions(mappings, opts)
+  }
+
   const actions = []
   /** @type {string[]} */
   const keepFields = []
@@ -227,8 +236,14 @@ export function fieldMappingsToTransformActions(mappings, opts = {}) {
     }
 
     const src = sources[0]
-    if (src && src !== dest) {
+    if (sources.length > 1) {
+      actions.push({ op: 'copy', fields: sources, targetField: dest })
+    }
+    else if (src && src !== dest) {
       // field = source column, targetField = destination column
+      actions.push({ op: 'copy', field: src, targetField: dest })
+    }
+    else if (src && src === dest && (m.cast || m.required)) {
       actions.push({ op: 'copy', field: src, targetField: dest })
     }
     // Same-name fields pass through; still keep them for export projection.

@@ -1,4 +1,5 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
+import { invalidateLocalOrgSync } from '~~/server/utils/ingestBackend.js'
 import { normalizePipeline } from '~~/server/utils/connectors/pipeline/defaults.js'
 import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
 import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
@@ -76,6 +77,8 @@ export default defineEventHandler(async (event) => {
   if (error) {
     throw createError({ statusCode: 400, statusMessage: error.message })
   }
+
+  invalidateLocalOrgSync(organizationId)
 
   return { item: data }
 })

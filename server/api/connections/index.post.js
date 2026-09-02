@@ -1,4 +1,5 @@
 import { encryptSecrets } from '~~/server/utils/connectorCrypto.js'
+import { invalidateLocalOrgSync } from '~~/server/utils/ingestBackend.js'
 import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 export default defineEventHandler(async (event) => {
@@ -89,6 +90,8 @@ export default defineEventHandler(async (event) => {
     .from('connections')
     .update({ status: hasSecrets || Object.keys(config).length ? 'ready' : 'draft' })
     .eq('id', connection.id)
+
+  invalidateLocalOrgSync(organizationId)
 
   return {
     item: {

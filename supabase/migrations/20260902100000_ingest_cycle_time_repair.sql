@@ -1,46 +1,8 @@
--- Lock down physical ingest.* tables:
--- - Revoke authenticated SELECT / schema USAGE
--- - Enable RLS with deny-all for authenticated (defense in depth)
--- - New tables from ensure_ingest_table follow the same rules
--- Access remains via service_role RPCs / Nitro admin client only.
+-- Repair ingest.* tables after bootstrap order bug: lockdown migration ran after
+-- ingest_cycle and reverted ensure_ingest_table without cycle_time, while
+-- ingest_append_rows still inserts into cycle_time.
 
-revoke usage on schema ingest from authenticated;
-
-alter default privileges in schema ingest
-  revoke select on tables from authenticated;
-
--- Existing tables: revoke SELECT, enable RLS, deny-all policy for authenticated
-do $$
-declare
-  t text;
-begin
-  for t in
-    select c.relname::text
-    from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'ingest'
-      and c.relkind = 'r'
-      and c.relname ~ '^[a-z][a-z0-9_]*$'
-  loop
-    execute format('revoke all on table ingest.%I from authenticated', t);
-    execute format('alter table ingest.%I enable row level security', t);
-
-    execute format('drop policy if exists ingest_no_direct_access on ingest.%I', t);
-    execute format(
-      'create policy ingest_no_direct_access on ingest.%I
-         for all to authenticated
-         using (false)
-         with check (false)',
-      t
-    );
-
-    -- Keep service_role fully capable (BYPASSRLS typically applies; grant remains)
-    execute format('grant all on table ingest.%I to service_role', t);
-  end loop;
-end;
-$$;
-
--- Recreate ensure_ingest_table without authenticated grants
+-- Fix ensure_ingest_table (keep lockdown RLS / grants behaviour).
 create or replace function public.ensure_ingest_table(p_table text)
 returns text
 language plpgsql
@@ -104,6 +66,49 @@ $$;
 revoke all on function public.ensure_ingest_table(text) from public;
 grant execute on function public.ensure_ingest_table(text) to service_role;
 
--- Schema usage: service_role only (authenticated no longer needs ingest schema)
-grant usage on schema ingest to service_role;
-grant all on schema ingest to service_role;
+-- Backfill cycle_time on tables created before the fix.
+do $$
+declare
+  t text;
+  col_type text;
+begin
+  for t in
+    select c.relname::text
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'ingest'
+      and c.relkind = 'r'
+      and c.relname ~ '^[a-z][a-z0-9_]*$'
+  loop
+    select c.data_type
+    into col_type
+    from information_schema.columns c
+    where c.table_schema = 'ingest'
+      and c.table_name = t
+      and c.column_name = 'cycle_time';
+
+    if col_type is null then
+      execute format(
+        'alter table ingest.%I add column cycle_time timestamptz not null default now()',
+        t
+      );
+    elsif col_type <> 'timestamp with time zone' then
+      -- Legacy promoted jsonb cycle_time from source rows (e.g. cycleTime).
+      execute format(
+        'alter table ingest.%I rename column cycle_time to cycle_time_src',
+        t
+      );
+      execute format(
+        'alter table ingest.%I add column cycle_time timestamptz not null default now()',
+        t
+      );
+    end if;
+
+    execute format(
+      'create index if not exists %I on ingest.%I (organization_id, cycle_time)',
+      t || '_cycle_time_idx',
+      t
+    );
+  end loop;
+end;
+$$;

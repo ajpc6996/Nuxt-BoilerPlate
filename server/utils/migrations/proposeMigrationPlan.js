@@ -144,6 +144,8 @@ Zammad-specific (when destination is Zammad):
 - Use "__NOW__" for timestamp constants
 - Include active=true (boolean true, never an RT SortOrder/id) where the table requires it
 - groups: follow_up_assignment, shared_drafts, active are booleans; follow_up_possible is the string "yes" or "new_ticket" — never map SortOrder or numeric IDs into boolean columns
+- tickets: number (NOT NULL — map RT Tickets.id) and title (NOT NULL — map RT Subject) are required; preserve RT Tickets.id as tickets.id so Transactions.ObjectId resolves to ticket_articles.ticket_id
+- ticket_articles: ticket_id, type_id, sender_id, body, content_type are required; map RT Transactions.ObjectId→ticket_id, Type→type_id/sender_id, Content→body
 - tickets: state_id and priority_id are integers (FK). Never copy RT Status/Priority *names* (e.g. "approved") into them — use transform:"map" from names to Zammad ids (new=1, open=2, closed=4, normal priority=2). Unknown names should fall back to open/normal.
 - Map RT Queues→groups, Users→users, Tickets→tickets, Transactions(Create/Correspond/Comment)→articles carefully
 - Warn that Zammad may need cache clear / background jobs / Elasticsearch reindex after DB inserts
@@ -154,9 +156,17 @@ RT-specific (when source is Request Tracker):
 
 Return ONLY valid JSON (no markdown):
 {
+  "planVersion": 2,
   "sourceSummary": "brief source description",
   "destinationSummary": "brief destination description",
   "aiNotes": "risks, assumptions, constraint mitigations, ordering rationale",
+  "dependencies": {
+    "entities": [
+      { "key": "users", "order": 10, "destinationKey": "users", "requires": [] },
+      { "key": "queues", "order": 20, "destinationKey": "groups", "requires": [] },
+      { "key": "tickets", "order": 30, "destinationKey": "tickets", "requires": ["users", "groups"] }
+    ]
+  },
   "constraintChecklist": [
     {
       "entityKey": "users",
@@ -207,14 +217,26 @@ Return ONLY valid JSON (no markdown):
       "sourceEntity": "Users",
       "destinationEntity": "users",
       "fieldMappings": [
-        { "sources": ["Name"], "destination": "login", "transform": "copy", "required": true },
-        { "sources": ["EmailAddress"], "destination": "email", "transform": "copy", "required": true },
-        { "sources": [], "destination": "created_by_id", "transform": "constant", "constantValue": 1, "required": true },
-        { "sources": [], "destination": "updated_by_id", "transform": "constant", "constantValue": 1, "required": true },
-        { "sources": [], "destination": "created_at", "transform": "constant", "constantValue": "__NOW__", "required": true },
-        { "sources": [], "destination": "updated_at", "transform": "constant", "constantValue": "__NOW__", "required": true },
-        { "sources": [], "destination": "active", "transform": "constant", "constantValue": true, "required": false }
+        {
+          "id": "map_users_login",
+          "sources": [{ "entity": "users", "field": "Name", "type": "string" }],
+          "destination": "login",
+          "destinationType": "string",
+          "transform": "copy",
+          "required": true
+        },
+        {
+          "id": "map_users_created_by",
+          "sources": [],
+          "destination": "created_by_id",
+          "destinationType": "integer",
+          "transform": "constant",
+          "constantValue": 1,
+          "required": true,
+          "notes": "Assumes admin user id 1 exists"
+        }
       ],
+      "export": { "mode": "insert", "onConflict": "skip", "conflictTarget": "primary_key" },
       "notes": "Audit columns required by destination NOT NULL constraints"
     },
     {
@@ -231,14 +253,20 @@ Return ONLY valid JSON (no markdown):
 }
 
 Hard rules:
+- planVersion MUST be 2
 - For each business entity: extract → transform (map + dual-sink) → validate (unless blocked)
 - stageType must be one of: extract, transform, validate, export, manual
-- fieldMappings only on transform stages; transform: copy | constant | template | map | join
+- fieldMappings only on transform stages
+- Each fieldMapping MUST include destinationType (string|integer|boolean|timestamp|number)
+- Use transform:"map" with mapValues OR transform:{op:"chain",steps:[...]} for status/name → id conversions — never copy strings into integer/boolean columns
 - constant mappings: set constantValue (number|boolean|string). Use "__NOW__" for timestamps
-- optional ifNullValue on copy/map/join/template rows: static value when source is null only (use transform:"copy" + ifNullValue, not constant)
+- optional ifNullValue on copy/map rows: static value when source is null only
+- transform stages MUST include export:{mode:"insert",onConflict:"skip",conflictTarget:"primary_key"}
+- dependencies.entities MUST list order and requires[] for FK ordering
 - Never leave sourceEntity empty on extract/transform; never leave destinationEntity empty on transform/export
 - destinationFields on entities MUST include every NOT NULL / required column you will insert
 - Do not invent runner keys; mark missing runners in connectorNeeds
 - sortOrder starts at 0; entityKey lowercase snake_case
-- Prefer preferredRunner for each selected system when available in the registered list`
+- Prefer preferredRunner for each selected system when available in the registered list
+- See docs/migrations/PLAN_V2_REFERENCE.md on the platform for the full contract`
 }

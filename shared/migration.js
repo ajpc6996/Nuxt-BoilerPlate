@@ -2,6 +2,14 @@
  * Migration project helpers — hybrid model: raw always in ingest, mapped/export via dual-sink.
  */
 
+import {
+  normalizePlanDependencies,
+  normalizeStageExport,
+  normalizeTransformSpec,
+  normalizeMappingSources,
+  PLAN_VERSION_V2,
+} from './migrationPlanV2.js'
+
 export const MIGRATION_STATUSES = ['draft', 'planning', 'ready', 'running', 'completed', 'archived']
 
 export const MIGRATION_STAGE_TYPES = ['extract', 'transform', 'validate', 'export', 'manual']
@@ -71,14 +79,28 @@ export function resolveRunnerTableConfig(entityRef, entityKey = '') {
  */
 export function normalizeFieldMapping(raw) {
   const m = raw && typeof raw === 'object' ? raw : {}
-  const sources = Array.isArray(m.sources)
-    ? m.sources.map((s) => String(s || '').trim()).filter(Boolean)
+  const sourceRefs = normalizeMappingSources(m.sources)
+  const sources = sourceRefs.length
+    ? sourceRefs.map((s) => s.field)
     : (m.source ? [String(m.source).trim()] : [])
+
+  const transformRaw = m.transform
+  const transformSpec = normalizeTransformSpec(
+    m.transformSpec
+    || (transformRaw && typeof transformRaw === 'object' ? transformRaw : null),
+  )
+  const legacyTransform = transformSpec
+    ? (transformSpec.op === 'chain' ? 'chain' : transformSpec.op)
+    : String(transformRaw || 'copy').trim()
+
   return {
     id: String(m.id || cryptoRandomId()),
     destination: String(m.destination || '').trim(),
+    destinationType: String(m.destinationType || m.destination_type || '').trim().toLowerCase(),
     sources,
-    transform: String(m.transform || 'copy').trim(),
+    sourceRefs,
+    transform: legacyTransform,
+    transformSpec,
     cast: m.cast ? String(m.cast).trim() : '',
     mapValues: m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : null,
     template: m.template ? String(m.template) : '',
@@ -90,6 +112,7 @@ export function normalizeFieldMapping(raw) {
       : (m.if_null_value !== undefined ? m.if_null_value : undefined),
     required: Boolean(m.required),
     notes: m.notes ? String(m.notes).slice(0, 500) : '',
+    validation: m.validation && typeof m.validation === 'object' ? m.validation : null,
   }
 }
 
@@ -109,6 +132,7 @@ export function normalizeStageConfig(raw) {
     validationRules: Array.isArray(cfg.validationRules) ? cfg.validationRules : [],
     connectorNeeds: Array.isArray(cfg.connectorNeeds) ? cfg.connectorNeeds : [],
     destinationTable: cfg.destinationTable ? String(cfg.destinationTable).trim() : '',
+    export: normalizeStageExport(cfg.export),
     notes: cfg.notes ? String(cfg.notes).slice(0, 2000) : '',
   }
 }
@@ -143,12 +167,18 @@ export function normalizeMigrationStage(raw) {
  */
 export function normalizePlanConfig(raw) {
   const plan = raw && typeof raw === 'object' ? raw : {}
+  const planVersion = Number(plan.planVersion ?? plan.plan_version) || 1
   return {
+    planVersion: planVersion >= PLAN_VERSION_V2 ? PLAN_VERSION_V2 : planVersion,
     sourceSystemId: String(plan.sourceSystemId || '').trim(),
     destinationSystemId: String(plan.destinationSystemId || '').trim(),
     sourceSummary: String(plan.sourceSummary || '').trim(),
     destinationSummary: String(plan.destinationSummary || '').trim(),
     aiNotes: String(plan.aiNotes || '').trim(),
+    operatorNotes: String(plan.operatorNotes || '').trim(),
+    docsUrls: Array.isArray(plan.docsUrls) ? plan.docsUrls.map(String).slice(0, 20) : [],
+    schemas: normalizePlanSchemas(plan.schemas),
+    dependencies: normalizePlanDependencies(plan.dependencies),
     entities: Array.isArray(plan.entities)
       ? plan.entities.map((e) => ({
         key: cleanEntityKey(e?.key),
@@ -173,7 +203,46 @@ export function normalizePlanConfig(raw) {
           : [],
       }))
       : [],
+    lastValidation: plan.lastValidation && typeof plan.lastValidation === 'object'
+      ? plan.lastValidation
+      : null,
     approved: Boolean(plan.approved),
+  }
+}
+
+/**
+ * @param {unknown} raw
+ */
+function normalizePlanSchemas(raw) {
+  const schemas = raw && typeof raw === 'object' ? raw : {}
+  return {
+    source: normalizeSchemaSide(schemas.source),
+    destination: normalizeSchemaSide(schemas.destination),
+  }
+}
+
+/**
+ * @param {unknown} raw
+ */
+function normalizeSchemaSide(raw) {
+  const side = raw && typeof raw === 'object' ? raw : {}
+  const entities = side.entities && typeof side.entities === 'object' ? side.entities : {}
+  /** @type {Record<string, unknown>} */
+  const normalized = {}
+  for (const [key, ent] of Object.entries(entities)) {
+    const ek = cleanEntityKey(key)
+    if (!ek || !ent || typeof ent !== 'object') continue
+    const columns = ent.columns && typeof ent.columns === 'object' ? ent.columns : {}
+    normalized[ek] = {
+      table: String(ent.table || '').trim(),
+      columns,
+    }
+  }
+  return {
+    connectorId: String(side.connectorId || side.connector_id || '').trim(),
+    dialect: String(side.dialect || '').trim().toLowerCase(),
+    entities: normalized,
+    introspectedAt: side.introspectedAt || side.introspected_at || null,
   }
 }
 
@@ -197,6 +266,51 @@ export function normalizeMigrationProject(raw) {
     defaultRunMode,
     sampleLimit,
   }
+}
+
+/**
+ * Short data-flow name for migration stages (migration name is a separate column).
+ *
+ * @param {{ stageType?: string, entityKey?: string, stageName?: string }} opts
+ */
+export function migrationFlowName(opts) {
+  const stageType = String(opts?.stageType || '').trim()
+  const entity = String(opts?.entityKey || opts?.stageName || 'stage').trim()
+  if (stageType === 'extract') return `Extract ${entity}`
+  if (stageType === 'transform' || stageType === 'export') return `Map ${entity}`
+  return String(opts?.stageName || entity)
+}
+
+/**
+ * Human-readable destination label for migration data flows (UI only).
+ *
+ * @param {{
+ *   planConfig?: Record<string, unknown>,
+ *   stageType?: string,
+ *   entityKey?: string,
+ *   stageConfig?: Record<string, unknown>,
+ * }} opts
+ */
+export function migrationFlowDestinationLabel(opts) {
+  const planConfig = opts?.planConfig && typeof opts.planConfig === 'object' ? opts.planConfig : {}
+  const cfg = opts?.stageConfig && typeof opts.stageConfig === 'object' ? opts.stageConfig : {}
+  const stageType = String(opts?.stageType || '').trim()
+  const entity = cleanEntityKey(opts?.entityKey) || 'entity'
+  const destEntity = String(cfg.destinationEntity || cfg.entityLabel || entity).trim()
+  const friendlyDest = destEntity
+    .replace(/^ticket_/, '')
+    .replace(/_/g, ' ')
+    .trim()
+  const destSystemId = String(planConfig.destinationSystemId || '').trim().toLowerCase()
+  const destSystem = destSystemId ? destSystemId.replace(/_/g, ' ') : ''
+
+  if (stageType === 'extract') {
+    return `raw · ${entity.replace(/_/g, ' ')}`
+  }
+  if (destSystem) {
+    return `${destSystem} ${friendlyDest || entity.replace(/_/g, ' ')}`
+  }
+  return friendlyDest || entity.replace(/_/g, ' ')
 }
 
 /**

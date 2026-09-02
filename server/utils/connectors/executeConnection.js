@@ -27,6 +27,14 @@ export { mergeConnectorConfig } from './connectorConfig.js'
  *   fetchStack?: string[],
  *   returnRows?: boolean,
  *   isPlatformAdmin?: boolean,
+ *   migrationRun?: {
+ *     runMode?: string,
+ *     projectId?: string,
+ *     sampleLimit?: number,
+ *     stageId?: string,
+ *     entityKey?: string,
+ *     stageType?: string,
+ *   },
  * }} opts
  */
 export async function executeDataSource(opts) {
@@ -135,13 +143,33 @@ export async function executeDataSource(opts) {
         excludeSourceId: dataSource.id,
         fetchStack: [...fetchStack, dataSource.id],
       })
+
+      if (dataSource.is_migration && dataSource.migration_project_id) {
+        const { scopeMigrationExtractRows } = await import('~~/server/utils/migrations/migrationExtractScope.js')
+        for (const node of pipeline.nodes.filter((n) => n.type === 'fetch')) {
+          const sourceId = String(node.data?.sourceId || '').trim()
+          if (!sourceId || !Array.isArray(seedOutputs[node.id])) continue
+          const { data: childSource } = await admin
+            .from('data_sources')
+            .select('id, organization_id, migration_project_id, migration_stage_id')
+            .eq('id', sourceId)
+            .maybeSingle()
+          if (!childSource) continue
+          const scoped = await scopeMigrationExtractRows(admin, childSource, seedOutputs[node.id])
+          seedOutputs[node.id] = scoped.rows
+          if (scoped.meta?.scopedToTickets) {
+            resultMeta = { ...(resultMeta || {}), ...scoped.meta }
+          }
+        }
+      }
+
       pipelineResult = executePipeline({
         pipeline,
         seedOutputs,
         debug: pipelineDebug,
       })
       retrievedRows = Object.values(seedOutputs).flat()
-      resultMeta = { kind: 'merge', fetchCount: Object.keys(seedOutputs).length }
+      resultMeta = { kind: 'merge', fetchCount: Object.keys(seedOutputs).length, ...(resultMeta || {}) }
     }
     else {
       const runner = await getConnectorRunner(type.runner_key, admin)
@@ -160,6 +188,28 @@ export async function executeDataSource(opts) {
 
       retrievedRows = Array.isArray(result.rows) ? result.rows : []
       resultMeta = result.meta || {}
+
+      if (opts.migrationRun?.runMode === 'pilot') {
+        const sampleLimit = Number(opts.migrationRun.sampleLimit) || 0
+        if (sampleLimit > 0 && retrievedRows.length > sampleLimit) {
+          retrievedRows = retrievedRows.slice(0, sampleLimit)
+          resultMeta = {
+            ...resultMeta,
+            pilotSampleLimit: sampleLimit,
+            truncatedToSampleLimit: true,
+          }
+        }
+      }
+
+      if (dataSource.is_migration && dataSource.migration_project_id) {
+        const { scopeMigrationExtractRows } = await import('~~/server/utils/migrations/migrationExtractScope.js')
+        const scoped = await scopeMigrationExtractRows(admin, dataSource, retrievedRows)
+        retrievedRows = scoped.rows
+        if (scoped.meta && Object.keys(scoped.meta).length) {
+          resultMeta = { ...resultMeta, ...scoped.meta }
+        }
+      }
+
       pipelineResult = executePipeline({
         pipeline,
         retrievedRows,

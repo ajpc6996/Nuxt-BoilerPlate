@@ -1,3 +1,5 @@
+import { invalidateLocalOrgSync, probeLocalIngestBackend } from '~~/server/utils/ingestBackend.js'
+
 /**
  * Platform: update per-organization ingest backend.
  * Body: { ingestBackend: 'supabase'|'local', ingest_backend?: string }
@@ -21,6 +23,16 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  if (ingestBackend === 'local') {
+    const probe = await probeLocalIngestBackend()
+    if (!probe.configured || !probe.reachable) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: probe.message || 'Local ingest warehouse is not available.',
+      })
+    }
+  }
+
   const admin = useSupabaseAdmin()
   const { data, error } = await admin
     .from('organizations')
@@ -35,6 +47,8 @@ export default defineEventHandler(async (event) => {
       statusMessage: error?.message || 'Failed to update ingest backend',
     })
   }
+
+  invalidateLocalOrgSync(organizationId)
 
   return { item: data }
 })

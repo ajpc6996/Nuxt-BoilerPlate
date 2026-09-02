@@ -1,41 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
-import {
-  getSupabasePublishableKey,
-  getSupabaseUrl,
-} from '~~/shared/supabaseKeys.js'
-
 /**
  * Platform admin + aal2 gate for connector type management.
  * @param {import('h3').H3Event} event
  */
 export async function requirePlatformAdmin(event) {
-  const authHeader = getHeader(event, 'authorization') || ''
-  const token = authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : null
-
-  if (!token) {
-    throw createError({ statusCode: 401, statusMessage: 'Missing access token' })
-  }
-
-  const config = useRuntimeConfig()
-  const userClient = createClient(
-    getSupabaseUrl(config),
-    getSupabasePublishableKey(config),
-    {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    },
-  )
-
-  const {
-    data: { user },
-    error,
-  } = await userClient.auth.getUser()
-
-  if (error || !user) {
-    throw createError({ statusCode: 401, statusMessage: 'Invalid session' })
-  }
+  const { user, token } = await requireVerifiedUser(event)
 
   const payload = decodeJwtPayload(token)
   if (payload?.aal !== 'aal2') {
@@ -60,17 +28,4 @@ export async function requirePlatformAdmin(event) {
   }
 
   return { user, profile, isPlatformAdmin: true }
-}
-
-/**
- * @param {string} token
- */
-function decodeJwtPayload(token) {
-  try {
-    const part = token.split('.')[1]
-    const json = Buffer.from(part, 'base64url').toString('utf8')
-    return JSON.parse(json)
-  } catch {
-    return null
-  }
 }

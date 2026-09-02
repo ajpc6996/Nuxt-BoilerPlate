@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
   const admin = useSupabaseAdmin()
   const { data, error } = await admin
     .from('data_sources')
-    .select('id, name, status, destination_table, config, pipeline, last_run_at, last_error, created_at, updated_at, connection_id, connections(id, name, connector_types(id, key, name, runner_key, capabilities, config_schema))')
+    .select('id, name, status, destination_table, destination_label, is_migration, migration_project_id, migration_stage_id, migration_name, migration_sort_order, config, pipeline, last_run_at, last_error, created_at, updated_at, connection_id, connections(id, name, connector_types(id, key, name, runner_key, capabilities, config_schema))')
     .eq('organization_id', organizationId)
     .order('name')
 

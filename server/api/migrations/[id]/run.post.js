@@ -20,5 +20,7 @@ export default defineEventHandler(async (event) => {
     isPlatformAdmin,
     runMode,
     stageIds: Array.isArray(body?.stageIds) ? body.stageIds : undefined,
+    continueRunId: body?.continueRunId ? String(body.continueRunId) : undefined,
+    finalizeRun: body?.finalizeRun !== false,
   })
 })

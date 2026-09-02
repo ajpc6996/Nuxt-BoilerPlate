@@ -4,6 +4,8 @@
  */
 
 import {
+  ZAMMAD_ARTICLE_SENDER_NAME_MAP,
+  ZAMMAD_ARTICLE_TYPE_NAME_MAP,
   ZAMMAD_TICKET_PRIORITY_NAME_MAP,
   ZAMMAD_TICKET_STATE_NAME_MAP,
 } from './migrationSystems.js'
@@ -68,6 +70,16 @@ const FIELD_HINTS = {
       updated_by_id: { type: 'integer', placeholder: '1' },
     },
     tickets: {
+      number: {
+        type: 'string',
+        placeholder: 'RT Tickets.id',
+        hint: 'Zammad display number (NOT NULL) — usually RT ticket id as text',
+      },
+      title: {
+        type: 'string',
+        placeholder: 'RT Subject',
+        hint: 'Ticket title (NOT NULL)',
+      },
       state_id: {
         type: 'enum',
         options: uniqueMapOptions(ZAMMAD_TICKET_STATE_NAME_MAP, 'Zammad state'),
@@ -89,6 +101,26 @@ const FIELD_HINTS = {
       updated_at: { type: 'timestamp', options: [{ value: '__NOW__', label: 'Now (__NOW__)' }] },
     },
     articles: {
+      ticket_id: {
+        type: 'integer',
+        placeholder: 'RT ObjectId',
+        hint: 'Must match tickets.id — preserve RT ticket id on ticket export',
+      },
+      type_id: {
+        type: 'enum',
+        options: uniqueMapOptions(ZAMMAD_ARTICLE_TYPE_NAME_MAP, 'Zammad article type'),
+        placeholder: '10',
+        hint: 'ticket_article_types.id (default note = 10)',
+      },
+      sender_id: {
+        type: 'enum',
+        options: uniqueMapOptions(ZAMMAD_ARTICLE_SENDER_NAME_MAP, 'Zammad sender'),
+        placeholder: '2',
+        hint: 'ticket_article_senders.id (default Agent = 2)',
+      },
+      body: { type: 'string', placeholder: 'RT Content', hint: 'Article body (NOT NULL)' },
+      content_type: { type: 'string', placeholder: 'text/plain' },
+      internal: { type: 'boolean', placeholder: 'false' },
       created_by_id: { type: 'integer', placeholder: '1' },
       updated_by_id: { type: 'integer', placeholder: '1' },
       created_at: { type: 'timestamp', options: [{ value: '__NOW__', label: 'Now (__NOW__)' }] },
@@ -112,6 +144,11 @@ const FIELD_HINTS_BY_NAME = {
   group_id: FIELD_HINTS.zammad.tickets.group_id,
   customer_id: FIELD_HINTS.zammad.tickets.customer_id,
   owner_id: FIELD_HINTS.zammad.tickets.owner_id,
+  ticket_id: FIELD_HINTS.zammad.articles.ticket_id,
+  type_id: FIELD_HINTS.zammad.articles.type_id,
+  sender_id: FIELD_HINTS.zammad.articles.sender_id,
+  body: FIELD_HINTS.zammad.articles.body,
+  content_type: FIELD_HINTS.zammad.articles.content_type,
 }
 
 /**

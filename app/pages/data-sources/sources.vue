@@ -17,6 +17,30 @@
         v-model="listFilter"
         placeholder="Filter data flows…"
       />
+      <label class="flex items-center gap-2 text-sm text-[var(--mute)]">
+        <input
+          v-model="showMigrations"
+          type="checkbox"
+          class="accent-[var(--accent)]"
+        >
+        Show migrations
+      </label>
+      <select
+        v-if="showMigrations"
+        v-model="migrationFilterId"
+        class="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--ink)]"
+      >
+        <option value="">
+          All migrations
+        </option>
+        <option
+          v-for="project in migrationProjects"
+          :key="project.id"
+          :value="project.id"
+        >
+          {{ project.name }}
+        </option>
+      </select>
       <button
         type="button"
         class="btn-primary !px-4 !py-2"
@@ -74,6 +98,8 @@
         <thead class="border-b border-[var(--border)] text-[var(--mute)]">
           <tr>
             <th class="px-3 py-2 font-medium">Name</th>
+            <th class="px-3 py-2 font-medium">Migration</th>
+            <th class="px-3 py-2 font-medium">Migration name</th>
             <th class="px-3 py-2 font-medium">Connection</th>
             <th class="px-3 py-2 font-medium">Destination</th>
             <th class="px-3 py-2 font-medium">Status</th>
@@ -89,10 +115,16 @@
           >
             <td class="px-3 py-3 text-[var(--ink)]">{{ row.name }}</td>
             <td class="px-3 py-3 text-[var(--mute)]">
+              {{ row.is_migration ? 'Yes' : 'No' }}
+            </td>
+            <td class="px-3 py-3 text-[var(--mute)]">
+              {{ row.migration_name || '—' }}
+            </td>
+            <td class="px-3 py-3 text-[var(--mute)]">
               {{ row.connections?.name || '—' }}
             </td>
-            <td class="px-3 py-3 font-mono text-[var(--accent-ink)]">
-              {{ row.destination_table }}
+            <td class="px-3 py-3 text-[var(--accent-ink)]">
+              {{ displayDestination(row) }}
             </td>
             <td class="px-3 py-3">
               <div class="flex flex-col gap-1">
@@ -153,7 +185,7 @@
           </tr>
           <tr v-if="!filteredItems.length">
             <td
-              colspan="6"
+              colspan="8"
               class="px-3 py-8 text-center text-[var(--mute)]"
             >
               {{ items.length ? 'No sources match this filter.' : 'No sources yet.' }}
@@ -740,6 +772,9 @@ const { confirm: appConfirm } = useAppConfirm()
 
 const items = ref([])
 const listFilter = ref('')
+const showMigrations = ref(false)
+const migrationFilterId = ref('')
+const migrationProjects = ref([])
 const connections = ref([])
 const catalogByTypeId = ref({})
 const pending = ref(false)
@@ -816,20 +851,60 @@ const canRemoveExport = computed(() =>
 const editorBusy = computed(() => Boolean(editorBusyMode.value) || saving.value)
 
 const filteredItems = computed(() => {
+  let rows = items.value
+
+  if (!showMigrations.value) {
+    rows = rows.filter((row) => !row.is_migration)
+  }
+  else if (migrationFilterId.value) {
+    rows = rows.filter((row) => row.migration_project_id === migrationFilterId.value)
+  }
+
   const q = listFilter.value.trim().toLowerCase()
-  if (!q) return items.value
-  return items.value.filter((row) => {
-    const hay = [
-      row.name,
-      row.destination_table,
-      row.status,
-      row.connections?.name,
-      row.connections?.connector_types?.name,
-      row.last_error,
-    ].map((v) => String(v || '').toLowerCase()).join(' ')
-    return hay.includes(q)
-  })
+  if (q) {
+    rows = rows.filter((row) => {
+      const hay = [
+        row.name,
+        row.destination_table,
+        row.destination_label,
+        row.migration_name,
+        row.is_migration ? 'yes migration' : 'no',
+        row.status,
+        row.connections?.name,
+        row.connections?.connector_types?.name,
+        row.last_error,
+      ].map((v) => String(v || '').toLowerCase()).join(' ')
+      return hay.includes(q)
+    })
+  }
+
+  return sortDataFlows(rows)
 })
+
+/**
+ * @param {Array<Record<string, unknown>>} rows
+ */
+function sortDataFlows(rows) {
+  return [...rows].sort((a, b) => {
+    const aMig = Boolean(a.is_migration)
+    const bMig = Boolean(b.is_migration)
+    if (aMig !== bMig) return aMig ? 1 : -1
+    if (aMig && bMig) {
+      const nameCmp = String(a.migration_name || '').localeCompare(String(b.migration_name || ''))
+      if (nameCmp !== 0) return nameCmp
+      const orderCmp = (Number(a.migration_sort_order) || 0) - (Number(b.migration_sort_order) || 0)
+      if (orderCmp !== 0) return orderCmp
+    }
+    return String(a.name || '').localeCompare(String(b.name || ''))
+  })
+}
+
+/**
+ * @param {Record<string, unknown>} row
+ */
+function displayDestination(row) {
+  return String(row.destination_label || row.destination_table || '—')
+}
 
 const editorBusyLabel = computed(() => {
   if (editorBusyMode.value === 'test') return 'Testing source…'
@@ -1282,7 +1357,7 @@ async function load() {
   pending.value = true
   error.value = ''
   try {
-    const [connRes, catalogRes, srcRes] = await Promise.all([
+    const [connRes, catalogRes, srcRes, migRes] = await Promise.all([
       authedFetch('/api/connections', {
         query: { organizationId: activeOrganization.value.id },
       }),
@@ -1292,8 +1367,12 @@ async function load() {
       authedFetch('/api/data-sources', {
         query: { organizationId: activeOrganization.value.id },
       }),
+      authedFetch('/api/migrations', {
+        query: { organizationId: activeOrganization.value.id },
+      }),
     ])
     connections.value = connRes.items || []
+    migrationProjects.value = migRes.items || []
     const map = {}
     ;(catalogRes.items || []).forEach((t) => {
       map[t.id] = t
@@ -1519,6 +1598,10 @@ async function removeSource(row) {
     busyId.value = null
   }
 }
+
+watch(showMigrations, (value) => {
+  if (!value) migrationFilterId.value = ''
+})
 
 watch(
   () => activeOrganization.value?.id,

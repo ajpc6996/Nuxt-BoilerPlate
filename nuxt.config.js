@@ -71,6 +71,11 @@ export default defineNuxtConfig({
       || process.env.SUPABASE_SECRET_KEY
       || process.env.SUPABASE_SERVICE_ROLE_KEY
       || '',
+    // Legacy HS256 projects only (Dashboard → API → JWT Secret).
+    supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET || '',
+    // Cached JWKS for ES256/RS256 signing keys — required on corporate VPN.
+    // Fetch once while off VPN: curl https://<ref>.supabase.co/auth/v1/.well-known/jwks.json
+    supabaseJwksJson: process.env.SUPABASE_JWKS_JSON || '',
     // Local ingest warehouse backend connection (server-only).
     // Used when organizations.ingest_backend = 'local'.
     ingestDatabaseUrl: process.env.INGEST_DATABASE_URL

@@ -240,6 +240,8 @@
               :schema="selectedType.credential_schema"
               secret
               :has-existing-secrets="form.hasSecrets"
+              :revealable="Boolean(editingId)"
+              :stored-values="storedCredentials"
             />
           </div>
 
@@ -329,6 +331,7 @@ const saving = ref(false)
 const testing = ref(false)
 const editorError = ref('')
 const editorNotice = ref('')
+const storedCredentials = ref({})
 
 const form = reactive({
   name: '',
@@ -402,6 +405,23 @@ function statusClass(status) {
   return 'bg-[var(--accent-soft)] text-[var(--mute)]'
 }
 
+/**
+ * @param {string} connectionId
+ */
+async function loadStoredCredentials(connectionId) {
+  storedCredentials.value = {}
+  if (!activeOrganization.value?.id || !connectionId) return
+  try {
+    const res = await authedFetch(`/api/connections/${connectionId}/credentials`, {
+      query: { organizationId: activeOrganization.value.id },
+    })
+    storedCredentials.value = res.credentials || {}
+  }
+  catch {
+    storedCredentials.value = {}
+  }
+}
+
 function defaultsFromSchema(schema) {
   const out = {}
   const properties = schema?.properties || {}
@@ -423,6 +443,7 @@ function onTypeChange() {
 
 function openCreate() {
   editingId.value = null
+  storedCredentials.value = {}
   form.name = ''
   form.connectorTypeId = catalog.value[0]?.id || ''
   form.direction = 'inbound'
@@ -445,6 +466,7 @@ async function openEdit(row) {
   notice.value = ''
   editorError.value = ''
   editorNotice.value = ''
+  storedCredentials.value = {}
   try {
     const res = await authedFetch(`/api/connections/${row.id}`, {
       query: { organizationId: activeOrganization.value.id },
@@ -464,6 +486,9 @@ async function openEdit(row) {
       form.config.authMode = form.hasSecrets ? 'api_key' : 'none'
     }
     editorOpen.value = true
+    if (item.hasSecrets) {
+      await loadStoredCredentials(item.id)
+    }
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load connection'

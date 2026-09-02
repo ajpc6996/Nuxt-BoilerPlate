@@ -23,5 +23,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: error.message })
   }
 
+  const { invalidateLocalOrgSync } = await import('~~/server/utils/ingestBackend.js')
+  invalidateLocalOrgSync(organizationId)
+
   return { ok: true }
 })

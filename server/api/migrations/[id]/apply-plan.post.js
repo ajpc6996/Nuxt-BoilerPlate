@@ -74,6 +74,7 @@ export default defineEventHandler(async (event) => {
       plan_config: {
         ...planConfig,
         ...proposed.planConfig,
+        planVersion: proposed.planConfig?.planVersion || 2,
         sourceSystemId: planConfig.sourceSystemId || proposed.planConfig.sourceSystemId,
         destinationSystemId: planConfig.destinationSystemId || proposed.planConfig.destinationSystemId,
         aiNotes: proposed.generationNotes || proposed.planConfig?.aiNotes || '',

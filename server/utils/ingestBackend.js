@@ -19,6 +19,54 @@ let localPool = null
 /** @type {Map<string, number>} */
 const orgSyncedAt = new Map()
 
+/**
+ * Drop cached control-plane sync for an org (or all orgs).
+ * Call after connections / data sources change for local-backend orgs.
+ *
+ * @param {string} [organizationId]
+ */
+export function invalidateLocalOrgSync(organizationId) {
+  const orgId = String(organizationId || '').trim()
+  if (orgId) orgSyncedAt.delete(orgId)
+  else orgSyncedAt.clear()
+}
+
+/**
+ * Check whether INGEST_DATABASE_URL is set and the pool can connect.
+ */
+export async function probeLocalIngestBackend() {
+  const config = useRuntimeConfig()
+  const connectionString = String(config.ingestDatabaseUrl || '').trim()
+  if (!connectionString) {
+    return {
+      configured: false,
+      reachable: false,
+      message: 'INGEST_DATABASE_URL is not set on this server.',
+    }
+  }
+
+  try {
+    const pool = await getLocalPool()
+    await pool.query('select 1 as ok')
+    return {
+      configured: true,
+      reachable: true,
+      message: 'Local ingest warehouse is reachable.',
+    }
+  }
+  catch (err) {
+    const msg = String(err?.message || 'Local ingest warehouse connection failed.')
+    const dbMissing = msg.match(/database "([^"]+)" does not exist/i)
+    return {
+      configured: true,
+      reachable: false,
+      message: dbMissing
+        ? `Database "${dbMissing[1]}" does not exist. Create it first (e.g. createdb ${dbMissing[1]}) then run scripts/bootstrap-local-ingest.sh against that database.`
+        : msg,
+    }
+  }
+}
+
 async function getLocalPool() {
   if (localPool) return localPool
   let pg

@@ -1,13 +1,20 @@
 import { sanitizeDestinationTable } from '~~/server/utils/connectorCrypto.js'
 import { validatePipeline } from '~~/server/utils/connectors/pipeline/validate.js'
-import { cleanEntityKey, resolveRunnerTableConfig } from '~~/shared/migration.js'
-import { enrichMappingsWithSystemDefaults, enrichMappingsWithLookupMaps } from '~~/shared/migrationSystems.js'
+import {
+  cleanEntityKey,
+  migrationFlowDestinationLabel,
+  migrationFlowName,
+  resolveRunnerTableConfig,
+} from '~~/shared/migration.js'
+import { isPlanV2, buildMaterializeExportConfig } from '~~/shared/migrationPlanV2.js'
+import { enrichStageFieldMappings } from '~~/shared/migrationSystems.js'
 import {
   createExtractPipeline,
   createTransformDualSinkPipeline,
   defaultMigrationTables,
   fieldMappingsToTransformActions,
 } from '~~/shared/migrationPipeline.js'
+import { formatValidationBlockMessage, validateMigrationPlan } from '~~/shared/validateMigrationPlan.js'
 import { loadMigrationProject, loadMigrationStages } from '~~/server/utils/migrations.js'
 
 /**
@@ -24,6 +31,22 @@ import { loadMigrationProject, loadMigrationStages } from '~~/server/utils/migra
 export async function materializeMigrationStages(admin, opts) {
   const project = await loadMigrationProject(admin, opts.projectId, opts.organizationId)
   const stages = await loadMigrationStages(admin, opts.projectId)
+
+  const planConfig = project.plan_config && typeof project.plan_config === 'object'
+    ? project.plan_config
+    : {}
+  const planVersion = Number(planConfig.planVersion) || 1
+
+  if (!opts.skipValidation && isPlanV2(planConfig)) {
+    const validation = validateMigrationPlan(planConfig, stages)
+    if (!validation.valid) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: formatValidationBlockMessage(validation) || 'Plan validation failed',
+        data: validation,
+      })
+    }
+  }
 
   if (!project.source_connection_id) {
     throw createError({
@@ -84,7 +107,17 @@ export async function materializeMigrationStages(admin, opts) {
         extractConfig.maxRows = Number(cfg.maxRows)
       }
 
-      const flowName = `[Mig] ${project.name} · Extract ${entityKey || stage.name}`
+      const flowName = migrationFlowName({
+        stageType: 'extract',
+        entityKey: entityKey || stage.name,
+        stageName: stage.name,
+      })
+      const destinationLabel = migrationFlowDestinationLabel({
+        planConfig,
+        stageType: 'extract',
+        entityKey,
+        stageConfig: cfg,
+      })
       const dataSourceId = await upsertMigrationDataSource(admin, {
         organizationId: opts.organizationId,
         userId: opts.userId,
@@ -92,8 +125,13 @@ export async function materializeMigrationStages(admin, opts) {
         name: flowName,
         connectionId: project.source_connection_id,
         destinationTable: destTable,
+        destinationLabel,
         pipeline,
         config: extractConfig,
+        migrationProjectId: project.id,
+        migrationStageId: stage.id,
+        migrationName: project.name,
+        migrationSortOrder: stage.sort_order,
       })
 
       extractByEntity[entityKey] = dataSourceId
@@ -139,24 +177,15 @@ export async function materializeMigrationStages(admin, opts) {
         continue
       }
 
-      const rawMappings = Array.isArray(cfg.fieldMappings) ? cfg.fieldMappings : []
-      const planConfig = project.plan_config && typeof project.plan_config === 'object'
-        ? project.plan_config
-        : {}
       const destinationSystemId = String(planConfig.destinationSystemId || '').trim()
       const destEntityRef = String(cfg.destinationEntity || cfg.entityLabel || entityKey).trim()
-      const withLookups = enrichMappingsWithLookupMaps(
+
+      const mappings = enrichStageFieldMappings(planConfig, cfg, entityKey)
+
+      const actions = fieldMappingsToTransformActions(mappings, {
         destinationSystemId,
-        destEntityRef || entityKey,
-        rawMappings,
-      )
-      const mappings = enrichMappingsWithSystemDefaults(
-        destinationSystemId,
-        destEntityRef || entityKey,
-        withLookups,
-      )
-      // Convert migration { sources, destination } → pipeline { field, targetField }
-      const actions = fieldMappingsToTransformActions(mappings, { destinationSystemId })
+        planVersion,
+      })
       const pipeline = createTransformDualSinkPipeline({
         extractSourceId,
         destinationTable: destTable,
@@ -175,14 +204,19 @@ export async function materializeMigrationStages(admin, opts) {
         cfg.destinationEntity || cfg.entityLabel,
         entityKey,
       )
-      const mapConfig = {
-        export: {
-          ...(destRunner.table || destRunner.query ? destRunner : {}),
-          onConflict: 'skip',
-        },
-      }
+      const mapConfig = buildMaterializeExportConfig(cfg, planConfig, destRunner, entityKey)
 
-      const flowName = `[Mig] ${project.name} · Map ${entityKey || stage.name}`
+      const flowName = migrationFlowName({
+        stageType: stage.stage_type,
+        entityKey: entityKey || stage.name,
+        stageName: stage.name,
+      })
+      const destinationLabel = migrationFlowDestinationLabel({
+        planConfig,
+        stageType: stage.stage_type,
+        entityKey,
+        stageConfig: cfg,
+      })
       const dataSourceId = await upsertMigrationDataSource(admin, {
         organizationId: opts.organizationId,
         userId: opts.userId,
@@ -190,8 +224,13 @@ export async function materializeMigrationStages(admin, opts) {
         name: flowName,
         connectionId: project.source_connection_id,
         destinationTable: destTable,
+        destinationLabel,
         pipeline,
         config: mapConfig,
+        migrationProjectId: project.id,
+        migrationStageId: stage.id,
+        migrationName: project.name,
+        migrationSortOrder: stage.sort_order,
       })
 
       await admin
@@ -199,7 +238,12 @@ export async function materializeMigrationStages(admin, opts) {
         .update({
           data_source_id: dataSourceId,
           status: 'ready',
-          config: { ...cfg, destinationTable: destTable, fieldMappings: mappings },
+          config: {
+            ...cfg,
+            destinationTable: destTable,
+            fieldMappings: mappings,
+            export: cfg.export || { mode: 'insert', onConflict: 'skip', conflictTarget: 'primary_key' },
+          },
         })
         .eq('id', stage.id)
 
@@ -211,6 +255,9 @@ export async function materializeMigrationStages(admin, opts) {
     .from('migration_projects')
     .update({ status: 'ready' })
     .eq('id', opts.projectId)
+
+  const { invalidateLocalOrgSync } = await import('~~/server/utils/ingestBackend.js')
+  invalidateLocalOrgSync(opts.organizationId)
 
   return { results, projectKey }
 }
@@ -227,18 +274,29 @@ export async function materializeMigrationStages(admin, opts) {
  *   name: string,
  *   connectionId: string,
  *   destinationTable: string,
+ *   destinationLabel?: string,
  *   pipeline: Record<string, unknown>,
  *   config: Record<string, unknown>,
+ *   migrationProjectId?: string,
+ *   migrationStageId?: string,
+ *   migrationName?: string,
+ *   migrationSortOrder?: number,
  * }} opts
  */
 async function upsertMigrationDataSource(admin, opts) {
   const patch = {
     name: opts.name,
     destination_table: opts.destinationTable,
+    destination_label: opts.destinationLabel || null,
     pipeline: opts.pipeline,
     connection_id: opts.connectionId,
     config: opts.config || {},
     status: 'draft',
+    is_migration: true,
+    migration_project_id: opts.migrationProjectId || null,
+    migration_stage_id: opts.migrationStageId || null,
+    migration_name: opts.migrationName || null,
+    migration_sort_order: Number(opts.migrationSortOrder) || 0,
     updated_at: new Date().toISOString(),
   }
 

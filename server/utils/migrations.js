@@ -5,6 +5,7 @@ import {
   normalizeMigrationStage,
   normalizePlanConfig,
 } from '~~/shared/migration.js'
+import { PLAN_VERSION_V2 } from '~~/shared/migrationPlanV2.js'
 import { normalizeConnectionDirection } from '~~/shared/connectionDirection.js'
 
 /**
@@ -112,6 +113,7 @@ export function normalizeProposedPlan(raw) {
       const mappings = Array.isArray(s?.fieldMappings ?? s?.config?.fieldMappings)
         ? (s.fieldMappings ?? s.config.fieldMappings).map(normalizeFieldMapping)
         : []
+      const stageExport = s?.export || s?.config?.export
       return {
         sortOrder: Number(s?.sortOrder ?? s?.sort_order ?? i),
         name: String(s?.name || `${stageType} ${entityKey || i + 1}`).trim(),
@@ -127,6 +129,10 @@ export function normalizeProposedPlan(raw) {
           validationRules: Array.isArray(s?.validationRules) ? s.validationRules : [],
           connectorNeeds: Array.isArray(s?.connectorNeeds) ? s.connectorNeeds : [],
           notes: s?.notes ? String(s.notes).slice(0, 2000) : '',
+          ...(stageType === 'transform' && stageExport ? { export: stageExport } : {}),
+          ...(stageType === 'transform' && !stageExport ? {
+            export: { mode: 'insert', onConflict: 'skip', conflictTarget: 'primary_key' },
+          } : {}),
         },
       }
     })
@@ -134,12 +140,15 @@ export function normalizeProposedPlan(raw) {
 
   return {
     planConfig: normalizePlanConfig({
+      planVersion: PLAN_VERSION_V2,
       sourceSummary: plan.sourceSummary,
       destinationSummary: plan.destinationSummary,
       aiNotes: plan.aiNotes ?? plan.generation_notes,
       entities: plan.entities,
       connectorNeeds: plan.connectorNeeds,
       constraintChecklist: plan.constraintChecklist ?? plan.constraint_checklist,
+      dependencies: plan.dependencies,
+      schemas: plan.schemas,
       approved: false,
     }),
     stages,
