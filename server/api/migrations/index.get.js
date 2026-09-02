@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
 
   const { data, error } = await admin
     .from('migration_projects')
-    .select('id, name, description, status, source_connection_id, destination_connection_id, default_run_mode, sample_limit, created_at, updated_at')
+    .select('id, name, description, status, source_connection_id, destination_connection_id, default_run_mode, sample_limit, reset_ingest_before_run, created_at, updated_at')
     .eq('organization_id', organizationId)
     .order('name')
 

@@ -1,5 +1,6 @@
 import { executeDataSource } from '~~/server/utils/connectors/executeConnection.js'
 import { cleanEntityKey } from '~~/shared/migration.js'
+import { clearMigrationIngestTables } from '~~/server/utils/migrations/clearMigrationIngest.js'
 import { loadMigrationProject, loadMigrationStages } from '~~/server/utils/migrations.js'
 
 /**
@@ -76,6 +77,16 @@ export async function runMigrationProject(admin, opts) {
       statusCode: 400,
       statusMessage: 'No materialized stages to run. Materialize the plan first.',
     })
+  }
+
+  /** @type {{ tables: Array<{ table: string, rowsDeleted: number }>, tableCount: number, rowsDeleted: number } | null} */
+  let ingestCleared = null
+  const shouldResetIngest = Boolean(project.reset_ingest_before_run)
+    && runMode !== 'sample'
+    && !opts.continueRunId
+
+  if (shouldResetIngest) {
+    ingestCleared = await clearMigrationIngestTables(admin, opts.projectId, opts.organizationId)
   }
 
   /** @type {Record<string, unknown>} */
@@ -261,6 +272,7 @@ export async function runMigrationProject(admin, opts) {
       runMode,
       stageResults,
       finalized: finalizeRun,
+      ingestCleared,
     }
   }
   catch (err) {

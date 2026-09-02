@@ -256,6 +256,9 @@ export function normalizeMigrationProject(raw) {
     ? String(p.defaultRunMode ?? p.default_run_mode)
     : 'sample'
   const sampleLimit = Math.min(500, Math.max(1, Number(p.sampleLimit ?? p.sample_limit) || 25))
+  const resetIngestBeforeRun = Boolean(
+    p.resetIngestBeforeRun ?? p.reset_ingest_before_run ?? false,
+  )
   return {
     name: String(p.name || '').trim(),
     description: p.description ? String(p.description).trim() : '',
@@ -265,6 +268,7 @@ export function normalizeMigrationProject(raw) {
     planConfig: normalizePlanConfig(p.planConfig ?? p.plan_config),
     defaultRunMode,
     sampleLimit,
+    resetIngestBeforeRun,
   }
 }
 

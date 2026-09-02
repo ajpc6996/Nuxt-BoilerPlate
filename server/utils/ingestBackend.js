@@ -236,6 +236,15 @@ function createSupabaseIngestBackend(admin) {
       return Number(data) || 0
     },
 
+    async ingestClearOrgTable({ table, organizationId }) {
+      const { data, error } = await admin.rpc('ingest_clear_org_table', {
+        p_table: table,
+        p_organization_id: organizationId,
+      })
+      if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+      return Number(data) || 0
+    },
+
     async ingestCleanupExpired({ table, organizationId, connectionId, retentionDays }) {
       const { data, error } = await admin.rpc('ingest_cleanup_expired', {
         p_table: table,
@@ -393,6 +402,16 @@ function createLocalIngestBackend(admin, organizationId) {
       const { rows: res } = await pool.query(
         'select public.ingest_replace_rows($1::text,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,$6::timestamptz) as result',
         [table, organizationId, connectionId, runId, payload, cycleTime],
+      )
+      return Number(res?.[0]?.result) || 0
+    },
+
+    async ingestClearOrgTable({ table, organizationId }) {
+      await ensureLocalOrgSynced(admin, organizationId)
+      const pool = await getLocalPool()
+      const { rows: res } = await pool.query(
+        'select public.ingest_clear_org_table($1::text,$2::uuid) as result',
+        [table, organizationId],
       )
       return Number(res?.[0]?.result) || 0
     },

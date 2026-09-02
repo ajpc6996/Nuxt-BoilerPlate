@@ -208,6 +208,21 @@
             >
           </div>
         </div>
+        <label class="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-[var(--border-soft)] bg-[var(--surface)] px-3 py-3">
+          <input
+            v-model="form.resetIngestBeforeRun"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 rounded border-[var(--border)]"
+          >
+          <span class="text-sm text-[var(--ink)]">
+            <span class="font-medium">Reset ingest before pilot/full run</span>
+            <span class="mt-1 block text-[var(--mute)]">
+              Clears this migration&apos;s <span class="font-mono text-xs">mig_raw_*</span> and
+              <span class="font-mono text-xs">mig_mapped_*</span> tables for your org at the start of each pilot or full run.
+              Other migrations are not affected.
+            </span>
+          </span>
+        </label>
       </section>
 
       <!-- Plan -->
@@ -458,6 +473,14 @@
               @click="confirmFullRun"
             >
               {{ runningMode === 'full' ? 'Full run in progress…' : 'Full run' }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy || clearingIngest"
+              @click="clearMigrationIngest"
+            >
+              {{ clearingIngest ? 'Clearing ingest…' : 'Clear ingest' }}
             </button>
             <button
               v-if="runs.length"
@@ -725,6 +748,7 @@ const materializing = ref(false)
 const running = ref(false)
 const runningMode = ref('')
 const clearingRuns = ref(false)
+const clearingIngest = ref(false)
 const runProgress = ref({
   active: false,
   mode: '',
@@ -819,6 +843,7 @@ const form = reactive({
   destinationSystemId: 'custom',
   defaultRunMode: 'sample',
   sampleLimit: 25,
+  resetIngestBeforeRun: false,
 })
 
 const inferenceText = computed(() => {
@@ -976,6 +1001,7 @@ const load = async () => {
     form.destinationConnectionId = res.item.destination_connection_id || ''
     form.defaultRunMode = res.item.default_run_mode || 'sample'
     form.sampleLimit = res.item.sample_limit || 25
+    form.resetIngestBeforeRun = Boolean(res.item.reset_ingest_before_run)
     const cfg = res.item.plan_config && typeof res.item.plan_config === 'object'
       ? res.item.plan_config
       : {}
@@ -1015,6 +1041,7 @@ const saveProject = async (opts = {}) => {
         destinationConnectionId: form.destinationConnectionId || null,
         defaultRunMode: form.defaultRunMode,
         sampleLimit: form.sampleLimit,
+        resetIngestBeforeRun: form.resetIngestBeforeRun,
         planConfig: buildPlanConfigPatch(),
       },
     })
@@ -1234,6 +1261,7 @@ const runMigration = async (runMode) => {
   let runId = null
   /** @type {Array<Record<string, unknown>>} */
   let allStageResults = []
+  let ingestClearedSummary = ''
 
   try {
     for (let i = 0; i < runnable.length; i += 1) {
@@ -1255,10 +1283,17 @@ const runMigration = async (runMode) => {
 
       runId = res.runId || runId
       allStageResults = res.stageResults || allStageResults
+      if (res.ingestCleared?.tableCount && !ingestClearedSummary) {
+        const cleared = res.ingestCleared
+        ingestClearedSummary = `Cleared ${cleared.rowsDeleted ?? 0} ingest row(s) across ${cleared.tableCount} table(s) for this migration.`
+      }
       runProgress.value.steps[i].status = 'done'
     }
 
-    notice.value = `${runMode} run completed (${allStageResults.length || runnable.length} stages).`
+    const parts = []
+    if (ingestClearedSummary) parts.push(ingestClearedSummary)
+    parts.push(`${runMode} run completed (${allStageResults.length || runnable.length} stages).`)
+    notice.value = parts.join(' ')
     await load()
     activeTab.value = 'run'
     if (runId) expandedRunId.value = runId
@@ -1330,6 +1365,40 @@ const clearRunHistory = async () => {
   }
   finally {
     clearingRuns.value = false
+  }
+}
+
+const clearMigrationIngest = async () => {
+  if (!activeOrganization.value?.id || pageBusy.value) return
+  const ok = await confirm({
+    title: 'Clear ingest for this migration?',
+    message: `Delete all raw and mapped ingest rows (mig_raw_* / mig_mapped_*) for “${project.value?.name || 'this migration'}” in your organization? Other migrations are not affected. Run history is kept.`,
+    confirmLabel: 'Clear ingest',
+    danger: true,
+  })
+  if (!ok) return
+  clearingIngest.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const res = await authedFetch(`/api/migrations/${projectId.value}/clear-ingest`, {
+      method: 'POST',
+      body: { organizationId: activeOrganization.value.id },
+    })
+    const tableCount = res.tableCount || 0
+    const rowsDeleted = res.rowsDeleted || 0
+    if (!tableCount) {
+      notice.value = 'No migration ingest tables found yet. Materialize flows first, or ingest is already empty.'
+    }
+    else {
+      notice.value = `Cleared ${rowsDeleted} ingest row(s) across ${tableCount} table(s) for this migration.`
+    }
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Failed to clear ingest'
+  }
+  finally {
+    clearingIngest.value = false
   }
 }
 </script>

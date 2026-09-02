@@ -22,6 +22,7 @@ MIGRATIONS=(
   migrations/20260811140000_licence_mfa_and_purge.sql
   migrations/20260811150000_ingest_lockdown.sql
   migrations/20260902100000_ingest_cycle_time_repair.sql
+  local_ingest_clear_migration.sql
 )
 
 for rel in "${MIGRATIONS[@]}"; do

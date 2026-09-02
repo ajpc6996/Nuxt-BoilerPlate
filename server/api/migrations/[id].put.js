@@ -22,6 +22,7 @@ export default defineEventHandler(async (event) => {
   if (body?.planConfig != null) patch.plan_config = parsed.planConfig
   if (body?.defaultRunMode != null) patch.default_run_mode = parsed.defaultRunMode
   if (body?.sampleLimit != null) patch.sample_limit = parsed.sampleLimit
+  if (body?.resetIngestBeforeRun != null) patch.reset_ingest_before_run = parsed.resetIngestBeforeRun
 
   const { data: item, error } = await admin
     .from('migration_projects')

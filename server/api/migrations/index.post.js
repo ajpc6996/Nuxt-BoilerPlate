@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
       plan_config: parsed.planConfig,
       default_run_mode: parsed.defaultRunMode,
       sample_limit: parsed.sampleLimit,
+      reset_ingest_before_run: parsed.resetIngestBeforeRun,
       created_by: user.id,
     })
     .select('*')
