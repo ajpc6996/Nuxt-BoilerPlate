@@ -3,10 +3,15 @@
  */
 
 import {
-  SYSTEM_BOOLEAN_DESTINATIONS,
   isIntegerDestinationField,
   normalizeMigrationSystemId,
 } from './migrationSystems.js'
+import {
+  getBooleanDestinationFields,
+  getDestinationKnowledge,
+  getPackExportPolicy,
+  resolveDestinationEntityKey,
+} from './migrationPacks/index.js'
 
 export const PLAN_VERSION_V2 = 2
 
@@ -233,8 +238,10 @@ export function compileFieldMappingToActions(mapping, opts = {}) {
   const sourceRefs = normalizeMappingSources(mapping.sources)
   const sources = sourceRefs.map((s) => s.field)
   const src = sources[0]
-  const destSystem = String(opts.destinationSystemId || '').trim().toLowerCase()
-  const boolDest = SYSTEM_BOOLEAN_DESTINATIONS[destSystem] || SYSTEM_BOOLEAN_DESTINATIONS.zammad
+  const destSystem = normalizeMigrationSystemId(opts.destinationSystemId)
+  const boolDest = getBooleanDestinationFields(destSystem)
+  const knowledge = getDestinationKnowledge(destSystem)
+  const extraInts = knowledge?.integerExtraFields || []
 
   /** @type {Array<Record<string, unknown>>} */
   const actions = []
@@ -288,7 +295,7 @@ export function compileFieldMappingToActions(mapping, opts = {}) {
     else if (boolDest.has(dest.toLowerCase())) {
       actions.push({ op: 'cast', field: dest, to: 'boolean', onError: 'null' })
     }
-    else if (isIntegerDestinationField(dest, boolDest)) {
+    else if (isIntegerDestinationField(dest, boolDest, extraInts)) {
       actions.push({ op: 'cast', field: dest, to: 'number', onError: 'null' })
     }
     if (hasMappingValue(mapping.constantValue)) {
@@ -435,23 +442,23 @@ export function buildMaterializeExportConfig(stageConfig, planConfig, destRunner
 
   const src = normalizeMigrationSystemId(planConfig?.sourceSystemId)
   const dest = normalizeMigrationSystemId(planConfig?.destinationSystemId)
-  const entity = String(entityKey || '').trim().toLowerCase()
+  const entity = resolveDestinationEntityKey(dest, entityKey, src)
+  const policy = getPackExportPolicy(src, dest, entity)
+  if (!policy) return { export: exportCfg }
 
-  // RT ticket ids are preserved as Zammad tickets.id (articles.ticket_id = Transactions.ObjectId).
-  // Remove prior pilot rows with the same id/number so ON CONFLICT skip does not leave wrong ids.
-  if (src === 'rt' && dest === 'zammad' && entity === 'tickets') {
-    exportCfg.preDeleteByField = 'id'
-    exportCfg.preDeleteCascade = [
-      { table: 'ticket_articles', matchField: 'ticket_id' },
-    ]
-    exportCfg.requireFields = ['id']
-    exportCfg.syncSerialSequence = 'id'
+  if (policy.preDeleteByField) exportCfg.preDeleteByField = policy.preDeleteByField
+  if (policy.preDeleteCascade) exportCfg.preDeleteCascade = policy.preDeleteCascade
+  if (policy.requireFields) exportCfg.requireFields = policy.requireFields
+  if (policy.syncSerialSequence) exportCfg.syncSerialSequence = policy.syncSerialSequence
+  if (policy.missingTicketParents) exportCfg.missingTicketParents = policy.missingTicketParents
+  if (policy.validateArticleForeignKeys) {
+    exportCfg.validateArticleForeignKeys = policy.validateArticleForeignKeys
   }
-
-  if (src === 'rt' && dest === 'zammad' && (entity === 'articles' || entity === 'transactions')) {
-    exportCfg.missingTicketParents = 'filter'
-    exportCfg.validateArticleForeignKeys = 'filter'
-    exportCfg.patchMissingUserRefs = true
+  if (policy.patchMissingUserRefs != null) {
+    exportCfg.patchMissingUserRefs = policy.patchMissingUserRefs
+  }
+  if (policy.exportFkValidation) {
+    exportCfg.exportFkValidation = policy.exportFkValidation
   }
 
   return { export: exportCfg }

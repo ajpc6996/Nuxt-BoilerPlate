@@ -141,17 +141,6 @@ function assertRequiredExportFields(rows, required, table) {
   })
 }
 
-/**
- * @param {string} table
- */
-function isTicketArticlesTable(table) {
-  const base = String(table || '').trim().split('.').pop()?.toLowerCase() || ''
-  return base === 'ticket_articles'
-}
-
-/**
- * @param {unknown} value
- */
 function normalizePgId(value) {
   if (value === undefined || value === null || String(value).trim() === '') return null
   const num = Number(value)
@@ -190,23 +179,29 @@ async function loadExistingPgIds(client, table, ids) {
 
 /**
  * @param {import('pg').Client} client
+ * @param {string} sql
  */
-async function resolveFallbackZammadUserId(client) {
-  const result = await client.query(
-    'SELECT id FROM users WHERE active = true ORDER BY id ASC LIMIT 1',
-  )
+async function resolveFallbackUserId(client, sql) {
+  const query = String(sql || '').trim()
+  if (!query) return null
+  const result = await client.query(query)
   return normalizePgId(result.rows?.[0]?.id)
 }
 
 /**
  * @param {Record<string, unknown>[]} rows
+ * @param {string[]} userFields
  * @param {string | null} fallbackUserId
  */
-function patchMissingUserReferences(rows, fallbackUserId) {
+function patchMissingUserReferences(rows, userFields, fallbackUserId) {
   if (!fallbackUserId) return rows
+  const fields = Array.isArray(userFields) && userFields.length
+    ? userFields
+    : ['created_by_id', 'updated_by_id']
   return rows.map((row) => {
     const next = { ...row }
-    for (const field of ['created_by_id', 'updated_by_id']) {
+    for (const field of fields) {
+      if (field === 'origin_by_id') continue
       const current = normalizePgId(next[field])
       if (!current) next[field] = Number(fallbackUserId)
     }
@@ -215,113 +210,113 @@ function patchMissingUserReferences(rows, fallbackUserId) {
 }
 
 /**
+ * Generic pack-driven FK partition for outbound Postgres exports.
  * @param {import('pg').Client} client
  * @param {Record<string, unknown>[]} rows
+ * @param {Record<string, unknown>} fkValidation
  * @param {{ patchMissingUserRefs?: boolean }} [opts]
  */
-async function partitionTicketArticleRows(client, rows, opts = {}) {
+async function partitionRowsByForeignKeys(client, rows, fkValidation, opts = {}) {
   let working = Array.isArray(rows) ? [...rows] : []
-  if (!working.length) {
+  const parentLookups = Array.isArray(fkValidation?.parentLookups) ? fkValidation.parentLookups : []
+  const userRefFields = Array.isArray(fkValidation?.userRefFields) ? fkValidation.userRefFields : []
+
+  if (!working.length || !parentLookups.length) {
     return {
-      valid: [],
+      valid: working,
       rejected: [],
-      missingTicketIds: [],
-      missingTypeIds: [],
-      missingSenderIds: [],
-      missingUserIds: [],
+      missingByReason: {},
       fallbackUserId: null,
     }
   }
 
   let fallbackUserId = null
-  if (opts.patchMissingUserRefs) {
-    fallbackUserId = await resolveFallbackZammadUserId(client)
-    working = patchMissingUserReferences(working, fallbackUserId)
+  if (opts.patchMissingUserRefs && fkValidation.fallbackUserSql) {
+    fallbackUserId = await resolveFallbackUserId(client, fkValidation.fallbackUserSql)
+    working = patchMissingUserReferences(working, userRefFields, fallbackUserId)
   }
 
-  const ticketIds = collectRowIds(working, 'ticket_id')
-  const typeIds = collectRowIds(working, 'type_id')
-  const senderIds = collectRowIds(working, 'sender_id')
-  const userIds = [
-    ...collectRowIds(working, 'created_by_id'),
-    ...collectRowIds(working, 'updated_by_id'),
-    ...collectRowIds(working, 'origin_by_id'),
-  ]
+  /** @type {Record<string, Set<string>>} */
+  const existingByTable = {}
+  for (const lookup of parentLookups) {
+    const table = String(lookup.parentTable || '').trim()
+    if (!table || existingByTable[table]) continue
+    const ids = collectRowIds(working, lookup.rowField)
+    existingByTable[table] = await loadExistingPgIds(client, table, ids)
+  }
 
-  const [tickets, types, senders, users] = await Promise.all([
-    loadExistingPgIds(client, 'tickets', ticketIds),
-    loadExistingPgIds(client, 'ticket_article_types', typeIds),
-    loadExistingPgIds(client, 'ticket_article_senders', senderIds),
-    loadExistingPgIds(client, 'users', userIds),
-  ])
+  if (userRefFields.length) {
+    const userIds = userRefFields.flatMap((field) => collectRowIds(working, field))
+    existingByTable.users = await loadExistingPgIds(client, 'users', userIds)
+  }
 
   /** @type {Record<string, unknown>[]} */
   const valid = []
   /** @type {Array<{ reasons: string[], row: Record<string, unknown> }>} */
   const rejected = []
-  /** @type {Set<string>} */
-  const missingTicketIds = new Set()
-  /** @type {Set<string>} */
-  const missingTypeIds = new Set()
-  /** @type {Set<string>} */
-  const missingSenderIds = new Set()
-  /** @type {Set<string>} */
-  const missingUserIds = new Set()
+  /** @type {Record<string, Set<string>>} */
+  const missingByReason = {}
 
   for (const row of working) {
     /** @type {string[]} */
     const reasons = []
-    const ticketId = normalizePgId(row.ticket_id)
-    const typeId = normalizePgId(row.type_id)
-    const senderId = normalizePgId(row.sender_id)
-    const createdById = normalizePgId(row.created_by_id)
-    const updatedById = normalizePgId(row.updated_by_id)
-    const originById = normalizePgId(row.origin_by_id)
 
-    if (!ticketId || !tickets.has(ticketId)) {
-      reasons.push('ticket_id')
-      if (ticketId) missingTicketIds.add(ticketId)
+    for (const lookup of parentLookups) {
+      const reason = String(lookup.reason || lookup.rowField || 'fk')
+      const value = normalizePgId(row[lookup.rowField])
+      const parentSet = existingByTable[lookup.parentTable] || new Set()
+      if (!value || !parentSet.has(value)) {
+        reasons.push(reason)
+        if (value) {
+          if (!missingByReason[reason]) missingByReason[reason] = new Set()
+          missingByReason[reason].add(value)
+        }
+      }
     }
-    if (!typeId || !types.has(typeId)) {
-      reasons.push('type_id')
-      if (typeId) missingTypeIds.add(typeId)
-    }
-    if (!senderId || !senders.has(senderId)) {
-      reasons.push('sender_id')
-      if (senderId) missingSenderIds.add(senderId)
-    }
-    if (!createdById || !users.has(createdById)) {
-      reasons.push('created_by_id')
-      if (createdById) missingUserIds.add(createdById)
-    }
-    if (!updatedById || !users.has(updatedById)) {
-      reasons.push('updated_by_id')
-      if (updatedById) missingUserIds.add(updatedById)
-    }
-    if (originById && !users.has(originById)) {
-      reasons.push('origin_by_id')
-      missingUserIds.add(originById)
+
+    for (const field of userRefFields) {
+      const value = normalizePgId(row[field])
+      const optional = field === 'origin_by_id'
+      if (optional) {
+        if (value && !(existingByTable.users || new Set()).has(value)) {
+          reasons.push(field)
+          if (!missingByReason[field]) missingByReason[field] = new Set()
+          missingByReason[field].add(value)
+        }
+        continue
+      }
+      if (!value || !(existingByTable.users || new Set()).has(value)) {
+        reasons.push(field)
+        if (value) {
+          if (!missingByReason[field]) missingByReason[field] = new Set()
+          missingByReason[field].add(value)
+        }
+      }
     }
 
     if (reasons.length) rejected.push({ reasons, row })
     else valid.push(row)
   }
 
+  /** @type {Record<string, string[]>} */
+  const missingLists = {}
+  for (const [reason, set] of Object.entries(missingByReason)) {
+    missingLists[reason] = [...set]
+  }
+
   return {
     valid,
     rejected,
-    missingTicketIds: [...missingTicketIds],
-    missingTypeIds: [...missingTypeIds],
-    missingSenderIds: [...missingSenderIds],
-    missingUserIds: [...missingUserIds],
+    missingByReason: missingLists,
     fallbackUserId,
   }
 }
 
 /**
  * @param {unknown} err
+ * @param {Record<string, string>} [hints]
  */
-function throwFriendlyPostgresForeignKeyError(err) {
+function throwFriendlyPostgresForeignKeyError(err, hints = {}) {
   const msg = String(err?.message || err?.statusMessage || err || '')
   if (!/foreign key constraint/i.test(msg)) {
     throw err
@@ -331,50 +326,33 @@ function throwFriendlyPostgresForeignKeyError(err) {
   const column = keyMatch?.[1] || 'unknown column'
   const value = keyMatch?.[2] || '?'
 
-  /** @type {Record<string, string>} */
-  const hints = {
-    ticket_id: 'Run Transform Tickets first so RT ids are preserved as tickets.id.',
-    type_id: 'Map RT Transactions.Type to valid Zammad ticket_article_types ids (default note=10). Materialize flows and retry.',
-    sender_id: 'Map RT Transactions.Type to valid Zammad ticket_article_senders ids (default Agent=2). Materialize flows and retry.',
-    created_by_id: 'Run Transform Users first, or ensure Zammad has an active user for created_by_id.',
-    updated_by_id: 'Run Transform Users first, or ensure Zammad has an active user for updated_by_id.',
-    origin_by_id: 'origin_by_id must reference an existing Zammad user.',
-  }
-
   throw createError({
     statusCode: 400,
-    statusMessage: `Article FK failed on ${column}=${value}. ${hints[column] || 'Check parent rows exist in Zammad before exporting articles.'}`,
+    statusMessage: `Foreign key failed on ${column}=${value}. ${hints[column] || 'Check parent rows exist before exporting.'}`,
   })
 }
 
 /**
  * @param {{
  *   rejected: Array<{ reasons: string[] }>,
- *   missingTicketIds: string[],
- *   missingTypeIds: string[],
- *   missingSenderIds: string[],
- *   missingUserIds: string[],
+ *   missingByReason: Record<string, string[]>,
  * }} summary
  * @param {number} total
+ * @param {string} [template]
  */
-function throwTicketArticlePartitionError(summary, total) {
+function throwFkPartitionError(summary, total, template) {
   const parts = []
-  if (summary.missingTicketIds.length) {
-    parts.push(`ticket_id (e.g. ${summary.missingTicketIds.slice(0, 6).join(', ')})`)
-  }
-  if (summary.missingTypeIds.length) {
-    parts.push(`type_id (e.g. ${summary.missingTypeIds.slice(0, 6).join(', ')})`)
-  }
-  if (summary.missingSenderIds.length) {
-    parts.push(`sender_id (e.g. ${summary.missingSenderIds.slice(0, 6).join(', ')})`)
-  }
-  if (summary.missingUserIds.length) {
-    parts.push(`user refs (e.g. ${summary.missingUserIds.slice(0, 6).join(', ')})`)
+  for (const [reason, ids] of Object.entries(summary.missingByReason || {})) {
+    if (!ids?.length) continue
+    parts.push(`${reason} (e.g. ${ids.slice(0, 6).join(', ')})`)
   }
   const detail = parts.length ? parts.join('; ') : 'foreign keys'
+  const message = String(template || 'FK: none of {total} row(s) are exportable ({detail}).')
+    .replace('{total}', String(total))
+    .replace('{detail}', detail)
   throw createError({
     statusCode: 400,
-    statusMessage: `Article FK: none of ${total} row(s) are exportable (${detail}). Run Users → Tickets before Articles.`,
+    statusMessage: message,
   })
 }
 
@@ -438,36 +416,41 @@ async function exportPostgres(ctx) {
     let skippedInvalidArticleRows = 0
     /** @type {Record<string, unknown>} */
     let articleFkMeta = {}
-    const parentMode = String(config.missingTicketParents || config.validateArticleForeignKeys || '').trim().toLowerCase()
-    const isArticles = isTicketArticlesTable(table)
+    const fkValidation = config.exportFkValidation && typeof config.exportFkValidation === 'object'
+      ? config.exportFkValidation
+      : null
+    const parentMode = String(
+      config.missingTicketParents
+      || config.validateArticleForeignKeys
+      || (fkValidation ? 'filter' : ''),
+    ).trim().toLowerCase()
     const filterInvalid = parentMode === 'filter'
-      || (isArticles && parentMode !== 'error' && config.validateTicketParents !== true)
-    const checkArticleFks = isArticles && (filterInvalid || parentMode === 'error' || config.validateTicketParents === true)
+    const checkFks = Boolean(fkValidation)
+      && (filterInvalid || parentMode === 'error' || config.validateTicketParents === true)
 
-    if (checkArticleFks) {
-      const summary = await partitionTicketArticleRows(client, rows, {
+    if (checkFks && fkValidation) {
+      const summary = await partitionRowsByForeignKeys(client, rows, fkValidation, {
         patchMissingUserRefs: config.patchMissingUserRefs !== false,
       })
       articleFkMeta = {
         fallbackUserId: summary.fallbackUserId,
-        missingTicketIds: summary.missingTicketIds.slice(0, 20),
-        missingTypeIds: summary.missingTypeIds.slice(0, 20),
-        missingSenderIds: summary.missingSenderIds.slice(0, 20),
-        missingUserIds: summary.missingUserIds.slice(0, 20),
+        missingByReason: Object.fromEntries(
+          Object.entries(summary.missingByReason || {}).map(([k, v]) => [k, (v || []).slice(0, 20)]),
+        ),
       }
 
       if (filterInvalid) {
         skippedInvalidArticleRows = summary.rejected.length
         rowsToInsert = summary.valid
         if (!rowsToInsert.length && rows.length) {
-          throwTicketArticlePartitionError(summary, rows.length)
+          throwFkPartitionError(summary, rows.length, fkValidation.emptyResultMessage)
         }
       }
       else if (summary.rejected.length) {
         const sample = summary.rejected.slice(0, 3).map((item, idx) => `#${idx + 1} ${item.reasons.join(', ')}`).join('; ')
         throw createError({
           statusCode: 400,
-          statusMessage: `Article FK preflight failed for ${summary.rejected.length}/${rows.length} row(s) (${sample}). Run Users → Tickets → Articles.`,
+          statusMessage: `FK preflight failed for ${summary.rejected.length}/${rows.length} row(s) (${sample}). Migrate parent entities first.`,
         })
       }
     }
@@ -499,7 +482,7 @@ async function exportPostgres(ctx) {
       )
     }
     catch (err) {
-      throwFriendlyPostgresForeignKeyError(err)
+      throwFriendlyPostgresForeignKeyError(err, fkValidation?.fkErrorHints || {})
     }
 
     const syncCol = String(config.syncSerialSequence || '').trim()

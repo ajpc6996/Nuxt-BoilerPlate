@@ -1,7 +1,20 @@
 /**
  * Known migration source/destination systems and database hints.
- * preferredRunner may not be registered yet — use fallbackRunner for today's platform.
+ * Product-specific defaults, maps, and export rules live in shared/migrationPacks/.
  */
+
+import { normalizeMigrationSystemId } from './migrationSystemIds.js'
+import {
+  getBooleanDestinationFields,
+  getDestinationKnowledge,
+  getMigrationPack,
+  getPackCrossFieldCopies,
+  getPackDestinationDefaults,
+  getPackLookupMaps,
+  resolveDestinationEntityKey,
+} from './migrationPacks/index.js'
+
+export { normalizeMigrationSystemId } from './migrationSystemIds.js'
 
 /** @typedef {{
  *   id: string,
@@ -187,386 +200,159 @@ export function getMigrationSystem(id) {
     || MIGRATION_SYSTEM_CATALOG.find((s) => s.id === 'custom')
 }
 
-/** Canonical ids for known migration system aliases (e.g. request_tracker → rt). */
-const MIGRATION_SYSTEM_ID_ALIASES = {
-  request_tracker: 'rt',
-  requesttracker: 'rt',
-  'request-tracker': 'rt',
-  rtir: 'rt',
-  best_practical: 'rt',
-  bestpractical: 'rt',
-}
+/**
+ * Pack-backed destination defaults (empty when no pack targets this destination).
+ * Prefer getPackDestinationDefaults() for new code.
+ * @type {Record<string, Record<string, Array<Record<string, unknown>>>>}
+ */
+export const SYSTEM_DESTINATION_DEFAULTS = new Proxy(/** @type {Record<string, any>} */ ({}), {
+  get(_target, prop) {
+    if (typeof prop !== 'string') return undefined
+    const knowledge = getDestinationKnowledge(prop)
+    return knowledge?.defaults || undefined
+  },
+  ownKeys() {
+    return [...new Set(MIGRATION_SYSTEM_CATALOG.map((s) => s.id)
+      .filter((id) => getDestinationKnowledge(id)))]
+  },
+  getOwnPropertyDescriptor(_t, prop) {
+    if (typeof prop !== 'string') return undefined
+    const value = getDestinationKnowledge(prop)?.defaults
+    if (!value) return undefined
+    return { configurable: true, enumerable: true, value }
+  },
+})
 
 /**
- * Normalize plan source/destination system ids so cross-system copies and export rules apply.
- * @param {string} systemId
+ * Pack-backed required destination columns.
+ * @type {Record<string, Record<string, string[]>>}
  */
-export function normalizeMigrationSystemId(systemId) {
-  const raw = String(systemId || '').trim().toLowerCase()
-  if (!raw || raw === 'custom') return raw
-  if (MIGRATION_SYSTEM_ID_ALIASES[raw]) return MIGRATION_SYSTEM_ID_ALIASES[raw]
-  if (MIGRATION_SYSTEM_CATALOG.some((s) => s.id === raw)) return raw
-  if (/\brt\b|request.?tracker|rtir|best.?practical/.test(raw)) return 'rt'
-  if (/zammad/.test(raw)) return 'zammad'
-  return raw
-}
+export const SYSTEM_REQUIRED_DESTINATION_COLUMNS = new Proxy(/** @type {Record<string, any>} */ ({}), {
+  get(_target, prop) {
+    if (typeof prop !== 'string') return undefined
+    return getDestinationKnowledge(prop)?.requiredColumns || undefined
+  },
+})
 
 /**
- * Known NOT NULL / audit defaults for destination systems (applied when missing from mappings).
- * `__NOW__` is resolved at transform runtime to an ISO timestamp.
- * `force: true` replaces any existing mapping to that destination (fixes bad AI maps like SortOrder→active).
- * @type {Record<string, Record<string, Array<{ destination: string, constantValue: unknown, required?: boolean, force?: boolean }>>>}
+ * Pack-backed entity aliases by destination system.
+ * @type {Record<string, Record<string, string>>}
  */
-export const SYSTEM_DESTINATION_DEFAULTS = {
-  zammad: {
-    users: [
-      { destination: 'created_by_id', constantValue: 1, required: true },
-      { destination: 'updated_by_id', constantValue: 1, required: true },
-      { destination: 'created_at', constantValue: '__NOW__', required: true },
-      { destination: 'updated_at', constantValue: '__NOW__', required: true },
-      { destination: 'active', constantValue: true, required: false, force: true },
-    ],
-    groups: [
-      { destination: 'created_by_id', constantValue: 1, required: true },
-      { destination: 'updated_by_id', constantValue: 1, required: true },
-      { destination: 'created_at', constantValue: '__NOW__', required: true },
-      { destination: 'updated_at', constantValue: '__NOW__', required: true },
-      // Booleans — never accept RT SortOrder/ids (e.g. "2") into these columns
-      { destination: 'active', constantValue: true, required: false, force: true },
-      { destination: 'shared_drafts', constantValue: true, required: false, force: true },
-      { destination: 'follow_up_assignment', constantValue: true, required: false, force: true },
-      { destination: 'follow_up_possible', constantValue: 'yes', required: false },
-    ],
-    tickets: [
-      { destination: 'created_by_id', constantValue: 1, required: true },
-      { destination: 'updated_by_id', constantValue: 1, required: true },
-      { destination: 'created_at', constantValue: '__NOW__', required: true },
-      { destination: 'updated_at', constantValue: '__NOW__', required: true },
-      // Required FKs — only when missing (status/priority maps may fill these)
-      { destination: 'group_id', constantValue: 1, required: true },
-      { destination: 'customer_id', constantValue: 1, required: true },
-      { destination: 'owner_id', constantValue: 1, required: false },
-      { destination: 'state_id', constantValue: 2, required: true },
-      { destination: 'priority_id', constantValue: 2, required: true },
-    ],
-    articles: [
-      { destination: 'created_by_id', constantValue: 1, required: true },
-      { destination: 'updated_by_id', constantValue: 1, required: true },
-      { destination: 'created_at', constantValue: '__NOW__', required: true },
-      { destination: 'updated_at', constantValue: '__NOW__', required: true },
-      { destination: 'type_id', constantValue: 10, required: true },
-      { destination: 'sender_id', constantValue: 2, required: true },
-      { destination: 'content_type', constantValue: 'text/plain', required: true },
-      { destination: 'internal', constantValue: false, required: true },
-    ],
+export const SYSTEM_DESTINATION_ENTITY_ALIASES = new Proxy(/** @type {Record<string, any>} */ ({}), {
+  get(_target, prop) {
+    if (typeof prop !== 'string') return undefined
+    return getDestinationKnowledge(prop)?.entityAliases || undefined
   },
-}
-
-/** RT Transactions.Type → Zammad ticket_article_types.id (seed defaults). */
-export const ZAMMAD_ARTICLE_TYPE_NAME_MAP = {
-  create: 10,
-  comment: 10,
-  correspond: 1,
-  status: 10,
-  customfield: 10,
-  email: 1,
-  phone: 5,
-  web: 11,
-}
-
-/** RT Transactions.Type → Zammad ticket_article_senders.id (seed defaults). */
-export const ZAMMAD_ARTICLE_SENDER_NAME_MAP = {
-  create: 2,
-  comment: 2,
-  correspond: 2,
-  status: 1,
-  customfield: 2,
-  email: 2,
-  phone: 2,
-  web: 3,
-}
-
-/** NOT NULL destination columns enforced at validation when schema introspection is incomplete. */
-export const SYSTEM_REQUIRED_DESTINATION_COLUMNS = {
-  zammad: {
-    tickets: ['number', 'title'],
-    articles: ['ticket_id', 'type_id', 'sender_id', 'body', 'content_type'],
+  ownKeys() {
+    return [...new Set(
+      MIGRATION_SYSTEM_CATALOG.map((s) => s.id).filter((id) => getDestinationKnowledge(id)?.entityAliases),
+    )]
   },
-}
+  getOwnPropertyDescriptor(_t, prop) {
+    if (typeof prop !== 'string') return undefined
+    const value = getDestinationKnowledge(prop)?.entityAliases
+    if (!value) return undefined
+    return { configurable: true, enumerable: true, value }
+  },
+})
 
 /**
- * Known source→destination column copies (applied at materialize when absent or forced).
- * @type {Record<string, Record<string, Record<string, Array<{
- *   destination: string,
- *   sources?: string[],
- *   transform?: string,
- *   cast?: string,
- *   template?: string,
- *   constantValue?: unknown,
- *   force?: boolean,
- *   required?: boolean,
- *   destinationType?: string,
- *   mapValues?: Record<string, unknown>,
- *   notes?: string,
- * }>>>}
+ * Pack-backed boolean destination fields (no silent Zammad fallback).
+ * @type {Record<string, Set<string>>}
  */
-export const SYSTEM_CROSS_FIELD_COPIES = {
-  rt: {
-    zammad: {
-      tickets: [
-        {
-          destination: 'id',
-          sources: ['id'],
-          transform: 'copy',
-          cast: 'number',
-          force: true,
-          required: true,
-          destinationType: 'integer',
-          notes: 'Preserve RT Tickets.id so ticket_articles.ticket_id (ObjectId) resolves',
-        },
-        {
-          destination: 'number',
-          sources: ['id'],
-          transform: 'copy',
-          cast: 'string',
-          force: true,
-          required: true,
-          destinationType: 'string',
-          notes: 'Zammad tickets.number is NOT NULL — map RT Tickets.id',
-        },
-        {
-          destination: 'title',
-          sources: ['Subject'],
-          transform: 'copy',
-          constantValue: 'Migrated ticket',
-          required: true,
-          destinationType: 'string',
-          notes: 'Zammad tickets.title is NOT NULL — map RT Subject with fallback',
-        },
-      ],
-      articles: [
-        {
-          destination: 'ticket_id',
-          sources: ['ObjectId', 'objectid', 'ObjectID', 'object_id'],
-          transform: 'copy',
-          cast: 'number',
-          force: true,
-          required: true,
-          destinationType: 'integer',
-          notes: 'RT Transactions.ObjectId → ticket_articles.ticket_id (needs tickets.id = RT id)',
-        },
-        {
-          destination: 'body',
-          sources: ['Content'],
-          transform: 'copy',
-          constantValue: '(migrated)',
-          required: true,
-          destinationType: 'string',
-          notes: 'Zammad ticket_articles.body is NOT NULL',
-        },
-        {
-          destination: 'type_id',
-          sources: ['Type'],
-          transform: 'map',
-          mapValues: ZAMMAD_ARTICLE_TYPE_NAME_MAP,
-          constantValue: 10,
-          required: true,
-          destinationType: 'integer',
-          notes: 'RT Transactions.Type → Zammad ticket_article_types.id (default note=10)',
-        },
-        {
-          destination: 'sender_id',
-          sources: ['Type'],
-          transform: 'map',
-          mapValues: ZAMMAD_ARTICLE_SENDER_NAME_MAP,
-          constantValue: 2,
-          required: true,
-          destinationType: 'integer',
-          notes: 'RT Transactions.Type → Zammad ticket_article_senders.id (default Agent=2)',
-        },
-      ],
-    },
+export const SYSTEM_BOOLEAN_DESTINATIONS = new Proxy(/** @type {Record<string, any>} */ ({}), {
+  get(_target, prop) {
+    if (typeof prop !== 'string') return undefined
+    const set = getBooleanDestinationFields(prop)
+    return set.size ? set : undefined
   },
-}
-
-/** Map source-side entity keys to destination catalog keys for defaults. */
-export const SYSTEM_DESTINATION_ENTITY_ALIASES = {
-  zammad: {
-    queues: 'groups',
-    queue: 'groups',
-    group: 'groups',
-    transactions: 'articles',
-    transaction: 'articles',
-    article: 'articles',
-    ticket_articles: 'articles',
-    ticket_article: 'articles',
-    ticket: 'tickets',
-    user: 'users',
-  },
-}
-export const SYSTEM_BOOLEAN_DESTINATIONS = {
-  zammad: new Set([
-    'active',
-    'shared_drafts',
-    'follow_up_assignment',
-    'out_of_office',
-    'vip',
-  ]),
-}
+})
 
 /**
- * Default Zammad ticket_states ids (fresh install). Custom statuses need operator map overrides.
- * Used when RT Status *names* (e.g. "approved") are mapped into integer state_id.
+ * Pack-backed cross-field copies: SYSTEM_CROSS_FIELD_COPIES[src][dest][entity]
+ * @type {Record<string, Record<string, Record<string, Array<Record<string, unknown>>>>>}
  */
-export const ZAMMAD_TICKET_STATE_NAME_MAP = {
-  new: 1,
-  open: 2,
-  stalled: 3,
-  pending: 3,
-  'pending reminder': 3,
-  'pending close': 6,
-  waiting: 3,
-  resolved: 4,
-  closed: 4,
-  rejected: 4,
-  deleted: 4,
-  merged: 5,
-  approved: 2,
-  approval: 2,
-  'in progress': 2,
-  working: 2,
-}
-
-/** RT priority labels / common ranks → default Zammad ticket_priorities (1 low, 2 normal, 3 high). */
-export const ZAMMAD_TICKET_PRIORITY_NAME_MAP = {
-  low: 1,
-  lowest: 1,
-  normal: 2,
-  medium: 2,
-  high: 3,
-  highest: 3,
-  '0': 1,
-  '1': 1,
-  '2': 2,
-  '3': 3,
-  '4': 3,
-  '5': 3,
-}
+export const SYSTEM_CROSS_FIELD_COPIES = new Proxy(/** @type {Record<string, any>} */ ({}), {
+  get(_target, srcProp) {
+    if (typeof srcProp !== 'string') return undefined
+    return new Proxy(/** @type {Record<string, any>} */ ({}), {
+      get(_t2, destProp) {
+        if (typeof destProp !== 'string') return undefined
+        const pack = getMigrationPack(srcProp, destProp)
+        if (!pack?.crossFieldCopies) return undefined
+        return pack.crossFieldCopies
+      },
+    })
+  },
+})
 
 /**
  * @param {string} dest
  * @param {Set<string> | undefined} boolDest
+ * @param {string[]} [extraIntegerFields]
  */
-export function isIntegerDestinationField(dest, boolDest) {
+export function isIntegerDestinationField(dest, boolDest, extraIntegerFields = []) {
   const d = String(dest || '').trim().toLowerCase()
   if (!d || boolDest?.has(d)) return false
   if (d === 'id' || d.endsWith('_id')) return true
-  return ['article_count', 'time_unit', 'assignment_timeout', 'reopen_time_in_days'].includes(d)
+  return (extraIntegerFields || []).includes(d)
 }
 
 /**
- * Upgrade Status/Priority name copies into map transforms so Postgres never sees "approved" in state_id.
+ * Upgrade name copies into map transforms using the active destination pack.
  * @param {string} systemId
  * @param {string} entityKey
  * @param {Array<Record<string, unknown>>} mappings
+ * @param {string} [sourceSystemId]
  */
-export function enrichMappingsWithLookupMaps(systemId, entityKey, mappings) {
-  const system = String(systemId || '').trim().toLowerCase()
-  let entity = String(entityKey || '').trim().toLowerCase()
-  entity = SYSTEM_DESTINATION_ENTITY_ALIASES[system]?.[entity] || entity
+export function enrichMappingsWithLookupMaps(systemId, entityKey, mappings, sourceSystemId = '') {
+  const system = normalizeMigrationSystemId(systemId)
+  const entity = resolveDestinationEntityKey(system, entityKey, sourceSystemId)
   const list = Array.isArray(mappings) ? mappings : []
-  if (system !== 'zammad') return list
+  const rules = getPackLookupMaps(system, entity, sourceSystemId)
+  if (!Object.keys(rules).length) return list
 
-  if (entity === 'tickets') {
-    return list.map((m) => {
-      const dest = String(m?.destination || '').trim().toLowerCase()
-      const transform = String(m?.transform || m?.op || 'copy').trim()
-      if (transform === 'constant') return m
+  return list.map((m) => {
+    const dest = String(m?.destination || '').trim().toLowerCase()
+    const transform = String(m?.transform || m?.op || 'copy').trim()
+    if (transform === 'constant') return m
+    const rule = rules[dest]
+    if (!rule?.map) return m
 
-      if (dest === 'state_id') {
-        const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
-        return {
-          ...m,
-          transform: 'map',
-          mapValues: { ...ZAMMAD_TICKET_STATE_NAME_MAP, ...existing },
-          constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
-            ? m.constantValue
-            : 2,
-          notes: m.notes || 'RT status names → Zammad state_id (default open=2)',
-        }
-      }
-
-      if (dest === 'priority_id') {
-        const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
-        return {
-          ...m,
-          transform: 'map',
-          mapValues: { ...ZAMMAD_TICKET_PRIORITY_NAME_MAP, ...existing },
-          constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
-            ? m.constantValue
-            : 2,
-          notes: m.notes || 'RT priority → Zammad priority_id (default normal=2)',
-        }
-      }
-
-      return m
-    })
-  }
-
-  if (entity === 'articles') {
-    return list.map((m) => {
-      const dest = String(m?.destination || '').trim().toLowerCase()
-      const transform = String(m?.transform || m?.op || 'copy').trim()
-      if (transform === 'constant') return m
-
-      if (dest === 'type_id') {
-        const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
-        return {
-          ...m,
-          transform: 'map',
-          sources: m.sources?.length ? m.sources : ['Type'],
-          mapValues: { ...ZAMMAD_ARTICLE_TYPE_NAME_MAP, ...existing },
-          constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
-            ? m.constantValue
-            : 10,
-          notes: m.notes || 'RT Transactions.Type → Zammad type_id (default note=10)',
-        }
-      }
-
-      if (dest === 'sender_id') {
-        const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
-        return {
-          ...m,
-          transform: 'map',
-          sources: m.sources?.length ? m.sources : ['Type'],
-          mapValues: { ...ZAMMAD_ARTICLE_SENDER_NAME_MAP, ...existing },
-          constantValue: m.constantValue !== undefined && m.constantValue !== null && m.constantValue !== ''
-            ? m.constantValue
-            : 2,
-          notes: m.notes || 'RT Transactions.Type → Zammad sender_id (default Agent=2)',
-        }
-      }
-
-      return m
-    })
-  }
-
-  return list
+    const existing = m.mapValues && typeof m.mapValues === 'object' ? m.mapValues : {}
+    /** @type {Record<string, unknown>} */
+    const next = {
+      ...m,
+      transform: 'map',
+      mapValues: { ...rule.map, ...existing },
+      notes: m.notes || rule.notes || '',
+    }
+    if (rule.defaultSources?.length && !(m.sources?.length)) {
+      next.sources = [...rule.defaultSources]
+    }
+    if (
+      (m.constantValue === undefined || m.constantValue === null || m.constantValue === '')
+      && rule.defaultConstant !== undefined
+    ) {
+      next.constantValue = rule.defaultConstant
+    }
+    return next
+  })
 }
 
 /**
- * Merge system-required constant destination fields into mappings when absent.
+ * Merge pack destination constant defaults into mappings when absent.
  * @param {string} systemId
  * @param {string} entityKey
  * @param {Array<Record<string, unknown>>} mappings
+ * @param {string} [sourceSystemId]
  */
-export function enrichMappingsWithSystemDefaults(systemId, entityKey, mappings) {
+export function enrichMappingsWithSystemDefaults(systemId, entityKey, mappings, sourceSystemId = '') {
   let list = Array.isArray(mappings) ? [...mappings] : []
-  const system = String(systemId || '').trim().toLowerCase()
-  let entity = String(entityKey || '').trim().toLowerCase()
-  entity = SYSTEM_DESTINATION_ENTITY_ALIASES[system]?.[entity] || entity
-  const defaults = SYSTEM_DESTINATION_DEFAULTS[system]?.[entity]
-  if (!defaults?.length) return list
+  const system = normalizeMigrationSystemId(systemId)
+  const entity = resolveDestinationEntityKey(system, entityKey, sourceSystemId)
+  const defaults = getPackDestinationDefaults(system, entity, sourceSystemId)
+  if (!defaults.length) return list
 
   const destKey = (m) => String(m?.destination || '').trim().toLowerCase()
 
@@ -598,7 +384,7 @@ export function enrichMappingsWithSystemDefaults(systemId, entityKey, mappings) 
 }
 
 /**
- * Merge cross-system field copies (e.g. RT Tickets.id → Zammad tickets.number).
+ * Merge pack cross-system field copies into mappings.
  * @param {string} sourceSystemId
  * @param {string} destSystemId
  * @param {string} entityKey
@@ -608,11 +394,9 @@ export function enrichMappingsWithSystemCopies(sourceSystemId, destSystemId, ent
   let list = Array.isArray(mappings) ? [...mappings] : []
   const src = normalizeMigrationSystemId(sourceSystemId)
   const dest = normalizeMigrationSystemId(destSystemId)
-  let entity = String(entityKey || '').trim().toLowerCase()
-  entity = SYSTEM_DESTINATION_ENTITY_ALIASES[dest]?.[entity] || entity
-
-  const rules = SYSTEM_CROSS_FIELD_COPIES[src]?.[dest]?.[entity]
-  if (!rules?.length) return list
+  const entity = resolveDestinationEntityKey(dest, entityKey, src)
+  const rules = getPackCrossFieldCopies(src, dest, entity)
+  if (!rules.length) return list
 
   const destKey = (m) => String(m?.destination || '').trim().toLowerCase()
 
@@ -651,8 +435,7 @@ export function enrichMappingsWithSystemCopies(sourceSystemId, destSystemId, ent
 }
 
 /**
- * Apply lookup maps, cross-system copies, and system defaults to stage field mappings.
- * Shared by materialize and plan validation so auto-filled columns are not flagged missing.
+ * Apply lookup maps, cross-system copies, and system defaults from the active pack.
  *
  * @param {Record<string, unknown>} planConfig
  * @param {Record<string, unknown>} stageConfig
@@ -671,6 +454,7 @@ export function enrichStageFieldMappings(planConfig, stageConfig, entityKey = ''
     destinationSystemId,
     entity,
     rawMappings,
+    sourceSystemId,
   )
   mappings = enrichMappingsWithSystemCopies(
     sourceSystemId,
@@ -682,6 +466,7 @@ export function enrichStageFieldMappings(planConfig, stageConfig, entityKey = ''
     destinationSystemId,
     entity,
     mappings,
+    sourceSystemId,
   )
   return mappings
 }
@@ -777,6 +562,7 @@ export function resolveRunnerForSystem(system, registeredRunners, capabilityStat
       driverKey: system.preferredRunner,
     }
   }
+
   return {
     runner: system.fallbackRunner,
     status: 'missing_runner',

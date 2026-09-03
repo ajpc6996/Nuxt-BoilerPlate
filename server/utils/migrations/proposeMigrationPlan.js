@@ -3,8 +3,8 @@ import { listRegisteredRunnerKeys } from '~~/server/utils/connectors/registry.js
 import { normalizeProposedPlan } from '~~/server/utils/migrations.js'
 import {
   getMigrationSystem,
-  SYSTEM_DESTINATION_DEFAULTS,
 } from '~~/shared/migrationSystems.js'
+import { getMigrationPack } from '~~/shared/migrationPacks/index.js'
 
 /**
  * Propose a multi-stage migration plan via configured LLM.
@@ -36,7 +36,6 @@ export async function proposeMigrationPlan(input) {
   const runners = await listRegisteredRunnerKeys()
   const sourceSystem = getMigrationSystem(input.sourceSystemId || 'custom')
   const destinationSystem = getMigrationSystem(input.destinationSystemId || 'custom')
-  const system = buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem)
 
   const userParts = [`Migration goal:\n${description || '(see operator notes)'}`]
   if (operatorNotes) {
@@ -60,12 +59,19 @@ export async function proposeMigrationPlan(input) {
     userParts.push(`Known entities:\n${JSON.stringify(input.entities, null, 2)}`)
   }
 
-  const destDefaults = SYSTEM_DESTINATION_DEFAULTS[destinationSystem.id]
-  if (destDefaults) {
+  const pack = getMigrationPack(sourceSystem.id, destinationSystem.id)
+  const destKnowledgeDefaults = pack?.destination?.defaults || {}
+  if (Object.keys(destKnowledgeDefaults).length) {
     userParts.push(
-      `Platform-known destination NOT NULL / audit defaults (must include unless docs prove otherwise):\n${JSON.stringify(destDefaults, null, 2)}`,
+      `Platform-known destination NOT NULL / audit defaults (must include unless docs prove otherwise):\n${JSON.stringify(destKnowledgeDefaults, null, 2)}`,
     )
   }
+
+  const packGuidance = pack?.promptGuidance
+    ? `\nPack guidance (${pack.label}):\n${pack.promptGuidance}\n`
+    : '\nNo product pack is registered for this source→destination pair. Rely on operator notes, docs URLs, and generic constraints only.\n'
+
+  const system = buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem, packGuidance)
 
   const raw = await callLlmJson({
     system,
@@ -104,7 +110,7 @@ function normalizeDocsUrls(docsUrls, docsUrl) {
  * @param {{ id: string, label: string, database: string, preferredRunner: string, notes?: string }} sourceSystem
  * @param {{ id: string, label: string, database: string, preferredRunner: string, notes?: string }} destinationSystem
  */
-function buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem) {
+function buildMigrationSystemPrompt(runners, sourceSystem, destinationSystem, packGuidance = '') {
   return `You are a senior data-migration architect. Plans you produce may be used in production without further code changes, so you MUST prevent avoidable runtime failures up front.
 
 Platform execution model:
@@ -136,24 +142,8 @@ CRITICAL — destination constraints & documentation:
 6. Prefer real source table names (sourceEntity) and destination table names (destinationEntity).
 7. Export projection is destination-only: every transform stage fieldMappings destination list must be exactly the columns you intend to INSERT/POST.
 8. Call out residual risks that cannot be auto-fixed (auth, network, missing seed users, Elasticsearch reindex) in aiNotes and generation_notes.
-9. Order stages so dependencies succeed (users/groups before tickets; tickets before articles; etc.).
-
-Zammad-specific (when destination is Zammad):
-- Direct PostgreSQL writes require audit columns on most tables: created_by_id, updated_by_id, created_at, updated_at
-- Default actor id 1 only if docs/environment imply a system/admin user exists; otherwise note that operators must set a real admin id
-- Use "__NOW__" for timestamp constants
-- Include active=true (boolean true, never an RT SortOrder/id) where the table requires it
-- groups: follow_up_assignment, shared_drafts, active are booleans; follow_up_possible is the string "yes" or "new_ticket" — never map SortOrder or numeric IDs into boolean columns
-- tickets: number (NOT NULL — map RT Tickets.id) and title (NOT NULL — map RT Subject) are required; preserve RT Tickets.id as tickets.id so Transactions.ObjectId resolves to ticket_articles.ticket_id
-- ticket_articles: ticket_id, type_id, sender_id, body, content_type are required; map RT Transactions.ObjectId→ticket_id, Type→type_id/sender_id, Content→body
-- tickets: state_id and priority_id are integers (FK). Never copy RT Status/Priority *names* (e.g. "approved") into them — use transform:"map" from names to Zammad ids (new=1, open=2, closed=4, normal priority=2). Unknown names should fall back to open/normal.
-- Map RT Queues→groups, Users→users, Tickets→tickets, Transactions(Create/Correspond/Comment)→articles carefully
-- Warn that Zammad may need cache clear / background jobs / Elasticsearch reindex after DB inserts
-
-RT-specific (when source is Request Tracker):
-- Typical MySQL tables are PascalCase (Users, Queues, Tickets, Transactions, Attachments)
-- Set sourceEntity to those real table names
-
+9. Order stages so dependencies succeed (parent entities before children).
+${packGuidance}
 Return ONLY valid JSON (no markdown):
 {
   "planVersion": 2,

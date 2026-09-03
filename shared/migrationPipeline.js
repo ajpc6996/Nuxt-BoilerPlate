@@ -7,9 +7,9 @@ import {
   compileFieldMappingsToActions,
 } from './migrationPlanV2.js'
 import {
-  SYSTEM_BOOLEAN_DESTINATIONS,
   isIntegerDestinationField,
 } from './migrationSystems.js'
+import { getBooleanDestinationFields, getDestinationKnowledge } from './migrationPacks/index.js'
 
 /**
  * @param {unknown} value
@@ -156,9 +156,9 @@ export function fieldMappingsToTransformActions(mappings, opts = {}) {
   /** @type {string[]} */
   const keepFields = []
   const destSystem = String(opts.destinationSystemId || '').trim().toLowerCase()
-  const boolDest = destSystem && SYSTEM_BOOLEAN_DESTINATIONS[destSystem]
-    ? SYSTEM_BOOLEAN_DESTINATIONS[destSystem]
-    : SYSTEM_BOOLEAN_DESTINATIONS.zammad
+  const boolDest = getBooleanDestinationFields(destSystem)
+  const knowledge = getDestinationKnowledge(destSystem)
+  const extraInts = knowledge?.integerExtraFields || []
 
   for (const m of mappings || []) {
     const dest = String(m.destination || m.targetField || '').trim()
@@ -207,7 +207,7 @@ export function fieldMappingsToTransformActions(mappings, opts = {}) {
       if (boolDest.has(dest.toLowerCase())) {
         actions.push({ op: 'cast', field: dest, to: 'boolean', onError: 'null' })
       }
-      else if (isIntegerDestinationField(dest, boolDest)) {
+      else if (isIntegerDestinationField(dest, boolDest, extraInts)) {
         actions.push({ op: 'cast', field: dest, to: 'number', onError: 'null' })
       }
       if (hasConstant) {
@@ -261,7 +261,7 @@ export function fieldMappingsToTransformActions(mappings, opts = {}) {
       // Avoid Postgres: invalid input syntax for type boolean: "2"
       actions.push({ op: 'cast', field: dest, to: 'boolean', onError: 'null' })
     }
-    else if (isIntegerDestinationField(dest, boolDest)) {
+    else if (isIntegerDestinationField(dest, boolDest, extraInts)) {
       // Avoid Postgres: invalid input syntax for type integer: "approved"
       actions.push({ op: 'cast', field: dest, to: 'number', onError: 'null' })
     }

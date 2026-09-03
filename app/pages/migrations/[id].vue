@@ -857,6 +857,7 @@ import {
   upsertPlanEntity,
 } from '~~/shared/migration.js'
 import { getMigrationSystem, databaseLabel } from '~~/shared/migrationSystems.js'
+import { getMigrationPack } from '~~/shared/migrationPacks/index.js'
 
 definePageMeta({
   layout: 'app',
@@ -1581,12 +1582,9 @@ function openProposeDialog() {
   const docs = Array.isArray(cfg.docsUrls) ? cfg.docsUrls : []
   proposeForm.docsUrlsText = docs.join('\n')
   if (!proposeForm.operatorNotes && !proposeForm.docsUrlsText) {
-    // Sensible starter hints for RT → Zammad
-    if (form.sourceSystemId === 'rt' && form.destinationSystemId === 'zammad') {
-      proposeForm.docsUrlsText = [
-        'https://docs.zammad.org/en/latest/',
-        'https://docs.bestpractical.com/rt/latest/index.html',
-      ].join('\n')
+    const pack = getMigrationPack(form.sourceSystemId, form.destinationSystemId)
+    if (pack?.docsUrls?.length) {
+      proposeForm.docsUrlsText = pack.docsUrls.join('\n')
     }
   }
   proposeDialogOpen.value = true

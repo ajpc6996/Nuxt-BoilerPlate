@@ -2,23 +2,28 @@ import { executeDataSource } from '~~/server/utils/connectors/executeConnection.
 import { cleanEntityKey } from '~~/shared/migration.js'
 import { clearMigrationIngestTables } from '~~/server/utils/migrations/clearMigrationIngest.js'
 import { loadMigrationProject, loadMigrationStages } from '~~/server/utils/migrations.js'
+import { getMigrationPackFromPlan } from '~~/shared/migrationPacks/index.js'
 
 /**
  * @param {{ entity_key?: string, stage_type?: string }} stage
+ * @param {{ childEntityKeys?: string[] } | null | undefined} gate
  */
-function isArticlesExportStage(stage) {
+function isChildExportStage(stage, gate) {
   const entity = cleanEntityKey(stage.entity_key)
-  if (entity !== 'articles' && entity !== 'transactions') return false
+  const keys = (gate?.childEntityKeys || []).map(cleanEntityKey)
+  if (!keys.includes(entity)) return false
   const type = String(stage.stage_type || '').trim().toLowerCase()
   return type === 'transform' || type === 'export'
 }
 
 /**
  * @param {Array<Record<string, unknown>>} stages
+ * @param {string} parentEntityKey
  */
-function findTicketsTransformStage(stages) {
+function findParentTransformStage(stages, parentEntityKey) {
+  const parent = cleanEntityKey(parentEntityKey)
   return stages.find((s) => {
-    if (cleanEntityKey(s.entity_key) !== 'tickets') return false
+    if (cleanEntityKey(s.entity_key) !== parent) return false
     const type = String(s.stage_type || '').trim().toLowerCase()
     return (type === 'transform' || type === 'export') && s.data_source_id
   }) || null
@@ -27,15 +32,17 @@ function findTicketsTransformStage(stages) {
 /**
  * @param {Array<Record<string, unknown>>} stageResults
  * @param {Array<Record<string, unknown>>} stages
+ * @param {string} parentEntityKey
  */
-function findTicketsTransformResult(stageResults, stages) {
-  const ticketsTransform = findTicketsTransformStage(stages)
-  if (ticketsTransform) {
-    const byStageId = stageResults.find((sr) => sr.ok && sr.stageId === ticketsTransform.id)
+function findParentTransformResult(stageResults, stages, parentEntityKey) {
+  const parentTransform = findParentTransformStage(stages, parentEntityKey)
+  if (parentTransform) {
+    const byStageId = stageResults.find((sr) => sr.ok && sr.stageId === parentTransform.id)
     if (byStageId) return byStageId
   }
+  const parent = cleanEntityKey(parentEntityKey)
   return stageResults.find((sr) => {
-    if (!sr.ok || cleanEntityKey(sr.entityKey) !== 'tickets') return false
+    if (!sr.ok || cleanEntityKey(sr.entityKey) !== parent) return false
     const type = String(sr.stageType || '').trim().toLowerCase()
     return type === 'transform' || type === 'export'
   }) || null
@@ -139,28 +146,27 @@ export async function runMigrationProject(admin, opts) {
       .eq('id', opts.projectId)
   }
 
+  const pack = getMigrationPackFromPlan(project.plan_config)
+  const childGate = pack?.childExportGate || null
+
   try {
     for (const stage of runnable) {
       try {
-        if (isArticlesExportStage(stage)) {
-          const ticketsTransformStage = findTicketsTransformStage(stages)
-          const ticketsResult = findTicketsTransformResult(stageResults, stages)
-          if (ticketsTransformStage && !ticketsResult) {
+        if (childGate && isChildExportStage(stage, childGate)) {
+          const parentTransformStage = findParentTransformStage(stages, childGate.parentEntityKey)
+          const parentResult = findParentTransformResult(stageResults, stages, childGate.parentEntityKey)
+          if (parentTransformStage && !parentResult) {
             throw createError({
               statusCode: 400,
-              statusMessage: 'Articles export requires Transform Tickets to succeed in the same run first.',
-              data: {
-                hint: 'Run Transform Tickets before Transform Articles. Extract Transactions can run anytime; only the articles transform/export writes to Zammad.',
-              },
+              statusMessage: childGate.missingParentMessage,
+              data: { hint: childGate.missingParentHint },
             })
           }
-          if (ticketsResult && Number(ticketsResult.outboundWritten ?? 0) <= 0) {
+          if (parentResult && Number(parentResult.outboundWritten ?? 0) <= 0) {
             throw createError({
               statusCode: 400,
-              statusMessage: 'Transform Tickets wrote 0 rows to Zammad. Articles export needs ticket rows with preserved RT ids first.',
-              data: {
-                hint: 'Open the Transform Tickets data flow, run Test, and confirm outbound rows include id, number, and title. Re-run Extract Tickets if raw ingest is empty, then Transform Tickets.',
-              },
+              statusMessage: childGate.zeroOutboundMessage,
+              data: { hint: childGate.zeroOutboundHint },
             })
           }
         }
@@ -217,7 +223,7 @@ export async function runMigrationProject(admin, opts) {
           dataSourceId: stage.data_source_id,
           ok: false,
           error: message,
-          hint: buildStageFailureHint(stage, message),
+          hint: buildStageFailureHint(stage, message, pack),
         }
         stageResults.push(failed)
 
@@ -312,40 +318,28 @@ function formatStageFailure(failed) {
 }
 
 /**
- * @param {{ stage_type?: string, name?: string }} stage
+ * @param {{ stage_type?: string, name?: string, entity_key?: string }} stage
  * @param {string} message
+ * @param {import('~~/shared/migrationPacks/types.js').MigrationPack | null} [pack]
  */
-function buildStageFailureHint(stage, message) {
+function buildStageFailureHint(stage, message, pack = null) {
   const msg = String(message || '').toLowerCase()
+  for (const rule of pack?.failureHints || []) {
+    try {
+      if (rule.test(msg, stage)) return rule.hint
+    }
+    catch {
+      // ignore bad pack tests
+    }
+  }
   if (msg.includes('does not exist') && msg.includes('column')) {
     return 'A destination column is missing or an unmapped source field was exported. Open Mapping, keep only real destination columns, rematerialize, then retry.'
   }
   if (msg.includes('violates not-null') || msg.includes('not-null constraint')) {
-    if (msg.includes('column "number"')) {
-      return 'Zammad tickets.number is required. Click Materialize flows to map RT Tickets.id → number, then retry Pilot.'
-    }
-    if (msg.includes('column "title"')) {
-      return 'Zammad tickets.title is required. Click Materialize flows to map RT Subject → title, then retry Pilot.'
-    }
     return 'A required destination column is null. Add a constant mapping (e.g. updated_by_id=1 or created_at=__NOW__), rematerialize, then retry.'
   }
-  if (msg.includes('foreign key') || msg.includes('violates foreign key') || msg.includes('article fk failed')) {
-    if (msg.includes('created_by_id') || msg.includes('updated_by_id') || msg.includes('origin_by_id')) {
-      return 'Article FK failed on user reference. Run Transform Users first so Zammad has valid user ids, then retry Articles.'
-    }
-    if (msg.includes('type_id')) {
-      return 'Article FK failed on type_id. Materialize flows so RT Transactions.Type maps to Zammad ticket_article_types, then retry.'
-    }
-    if (msg.includes('sender_id')) {
-      return 'Article FK failed on sender_id. Materialize flows so RT Transactions.Type maps to Zammad ticket_article_senders, then retry.'
-    }
-    if (msg.includes('ticket_articles') || stage.entity_key === 'articles' || stage.entity_key === 'transactions') {
-      return 'Article FK failed (usually ticket_id). Run Transform Tickets first with RT id preserved as tickets.id, then retry Articles.'
-    }
-    return 'Foreign key failed — migrate parent entities first (users → groups → tickets → articles) and ensure IDs align.'
-  }
-  if (msg.includes('missing required column') && msg.includes(' id')) {
-    return 'Ticket export rows are missing tickets.id — RT ticket ids were not preserved. Click Materialize flows, then re-pilot Tickets before Articles.'
+  if (msg.includes('foreign key') || msg.includes('violates foreign key') || msg.includes('article fk') || msg.includes('fk preflight') || msg.includes('fk:')) {
+    return 'Foreign key failed — migrate parent entities first and ensure IDs align.'
   }
   if (msg.includes('econnrefused') || msg.includes('timeout') || msg.includes('enotfound')) {
     return 'Connection/network failure. Use Connections → Test on the related inbound/outbound connection, then retry.'
@@ -354,10 +348,10 @@ function buildStageFailureHint(stage, message) {
     return 'Extract data flow has no table/query. Set sourceEntity on the stage (real table name), rematerialize, then retry.'
   }
   if (msg.includes('invalid input syntax for type boolean')) {
-    return 'A Zammad boolean column (active, shared_drafts, follow_up_assignment) received a non-boolean like “2” (often RT SortOrder). Click Materialize flows to force boolean constants, then retry Pilot.'
+    return 'A boolean destination column received a non-boolean value. Materialize with pack defaults / boolean constants, then retry.'
   }
   if (msg.includes('invalid input syntax for type integer')) {
-    return 'An integer FK (often state_id/priority_id) received a label like “approved”. Click Materialize flows so status/priority names map to Zammad ids, then retry Pilot. Adjust the state map in Mapping if your Zammad state ids differ.'
+    return 'An integer destination column received a non-integer label. Use a map transform to ids, rematerialize, then retry.'
   }
   if (stage.stage_type === 'transform' || stage.stage_type === 'export') {
     return 'Transform/export failed. Review Mapping for this entity, rematerialize flows, and Test the outbound connection.'
