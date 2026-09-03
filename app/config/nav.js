@@ -7,8 +7,8 @@
  * `icon` on a group is a key from `app/utils/navIcons.js` (shown in the
  * collapsed rail and beside the group label when expanded).
  *
- * Order note: `administration` is always rendered last by useAppNav
- * (regardless of position in this array). Prefer keeping it last here too.
+ * Order note: `administration` is rendered last by useAppNav, except
+ * `demo` (platform-only) sits under Administration when visible.
  *
  * @typedef {{ id: string, label: string, to: string, roles?: Array<'platform'|'orgAdmin'> }} NavItem
  * @typedef {{ id: string, label: string, icon?: string, to?: string, children: NavItem[], roles?: Array<'platform'|'orgAdmin'> }} NavGroup
@@ -51,26 +51,6 @@ export const appNavGroups = [
         label: 'Configure Reports',
         to: '/reports/configure',
         roles: ['platform', 'orgAdmin'],
-      },
-    ],
-  },
-  {
-    id: 'demo',
-    label: 'Demo',
-    icon: 'demo',
-    roles: ['platform'],
-    children: [
-      {
-        id: 'grid',
-        label: 'Grid',
-        to: '/grid',
-        roles: ['platform'],
-      },
-      {
-        id: 'widgets',
-        label: 'Widgets',
-        to: '/widgets',
-        roles: ['platform'],
       },
     ],
   },
@@ -164,6 +144,26 @@ export const appNavGroups = [
         label: 'Roles',
         to: '/administration/roles',
         roles: ['platform', 'orgAdmin'],
+      },
+    ],
+  },
+  {
+    id: 'demo',
+    label: 'Demo',
+    icon: 'demo',
+    roles: ['platform'],
+    children: [
+      {
+        id: 'grid',
+        label: 'Grid',
+        to: '/grid',
+        roles: ['platform'],
+      },
+      {
+        id: 'widgets',
+        label: 'Widgets',
+        to: '/widgets',
+        roles: ['platform'],
       },
     ],
   },

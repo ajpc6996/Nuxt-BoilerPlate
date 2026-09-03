@@ -18,17 +18,19 @@ export function useAppNav() {
   const { allowsRoles } = usePermissions()
 
   /**
-   * Administration must stay last even if nav config order changes.
+   * Administration stays last, except Demo (platform) sits under it when visible.
    * @param {Array<{ id: string }>} list
    */
-  function withAdministrationLast(list) {
+  function withAdminThenDemoLast(list) {
     const admin = []
+    const demo = []
     const rest = []
     for (const group of list) {
       if (group.id === 'administration') admin.push(group)
+      else if (group.id === 'demo') demo.push(group)
       else rest.push(group)
     }
-    return [...rest, ...admin]
+    return [...rest, ...admin, ...demo]
   }
 
   const groups = computed(() => {
@@ -43,7 +45,7 @@ export function useAppNav() {
       })
       .filter(Boolean)
 
-    return withAdministrationLast(visible)
+    return withAdminThenDemoLast(visible)
   })
 
   const filteredGroups = computed(() => {
@@ -67,7 +69,7 @@ export function useAppNav() {
       })
       .filter(Boolean)
 
-    return withAdministrationLast(filtered)
+    return withAdminThenDemoLast(filtered)
   })
 
   function initSidebar() {

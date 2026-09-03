@@ -472,11 +472,19 @@
                     </button>
                     <button
                       type="button"
-                      class="text-[var(--danger)] hover:underline"
+                      class="group relative inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--danger)] hover:border-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
                       :disabled="pageBusy"
+                      aria-label="Remove plan step"
                       @click="deleteStage(stage)"
                     >
-                      Remove
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 4.5h9M6 4.5V3.25A.75.75 0 016.75 2.5h2.5a.75.75 0 01.75.75V4.5m-5.5 0l.6 8.25a1 1 0 001 .9h4.3a1 1 0 001-.9l.6-8.25M6.75 7v4.5M9.25 7v4.5" />
+                      </svg>
+                      <span
+                        class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-raised)] px-2 py-1 text-[10px] font-medium text-[var(--ink)] opacity-0 shadow-md transition-opacity duration-75 group-hover:opacity-100 group-focus-visible:opacity-100"
+                      >
+                        Remove plan step
+                      </span>
                     </button>
                   </div>
                 </td>
