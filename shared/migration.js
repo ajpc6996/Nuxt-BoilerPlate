@@ -183,8 +183,14 @@ export function normalizePlanConfig(raw) {
       ? plan.entities.map((e) => ({
         key: cleanEntityKey(e?.key),
         label: String(e?.label || e?.key || '').trim(),
+        sourceEntity: String(e?.sourceEntity || e?.source_entity || '').trim(),
+        destinationEntity: String(e?.destinationEntity || e?.destination_entity || '').trim(),
         sourceFields: Array.isArray(e?.sourceFields) ? e.sourceFields.map(String) : [],
         destinationFields: Array.isArray(e?.destinationFields) ? e.destinationFields.map(String) : [],
+        sourceFieldTypes: normalizeFieldTypeMap(e?.sourceFieldTypes || e?.source_field_types),
+        destinationFieldTypes: normalizeFieldTypeMap(
+          e?.destinationFieldTypes || e?.destination_field_types,
+        ),
       }))
       : [],
     connectorNeeds: Array.isArray(plan.connectorNeeds) ? plan.connectorNeeds : [],
@@ -315,6 +321,90 @@ export function migrationFlowDestinationLabel(opts) {
     return `${destSystem} ${friendlyDest || entity.replace(/_/g, ' ')}`
   }
   return friendlyDest || entity.replace(/_/g, ' ')
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {Record<string, string>}
+ */
+function normalizeFieldTypeMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  /** @type {Record<string, string>} */
+  const out = {}
+  for (const [path, type] of Object.entries(raw)) {
+    const key = String(path || '').trim()
+    const t = String(type || '').trim().toLowerCase()
+    if (!key || !t) continue
+    out[key] = t
+  }
+  return out
+}
+
+/**
+ * Keep plan_config.entities in sync with a manually added/edited stage.
+ *
+ * @param {Record<string, unknown> | null | undefined} planConfig
+ * @param {{
+ *   key?: string,
+ *   label?: string,
+ *   sourceEntity?: string,
+ *   destinationEntity?: string,
+ *   sourceFields?: unknown[],
+ *   destinationFields?: unknown[],
+ *   sourceFieldTypes?: Record<string, string>,
+ *   destinationFieldTypes?: Record<string, string>,
+ * }} patch
+ */
+export function upsertPlanEntity(planConfig, patch) {
+  const plan = planConfig && typeof planConfig === 'object' ? { ...planConfig } : {}
+  const key = cleanEntityKey(patch?.key)
+  if (!key) return plan
+
+  const entities = Array.isArray(plan.entities)
+    ? plan.entities.map((e) => ({ ...(e || {}) }))
+    : []
+  const idx = entities.findIndex((e) => cleanEntityKey(e.key) === key)
+  const prev = idx >= 0 ? entities[idx] : {}
+
+  const mergeNames = (current, extra) => {
+    const set = new Set()
+    for (const item of [...(Array.isArray(current) ? current : []), ...(Array.isArray(extra) ? extra : [])]) {
+      const name = String(item || '').trim()
+      if (name) set.add(name)
+    }
+    return [...set]
+  }
+
+  const mergeTypes = (current, extra) => {
+    /** @type {Record<string, string>} */
+    const out = { ...normalizeFieldTypeMap(current) }
+    const incoming = normalizeFieldTypeMap(extra)
+    for (const [path, type] of Object.entries(incoming)) {
+      if (path && type) out[path] = type
+    }
+    return out
+  }
+
+  const next = {
+    ...prev,
+    key,
+    label: String(patch.label || prev.label || key).trim(),
+    sourceEntity: String(patch.sourceEntity || prev.sourceEntity || '').trim(),
+    destinationEntity: String(patch.destinationEntity || prev.destinationEntity || '').trim(),
+    sourceFields: mergeNames(prev.sourceFields, patch.sourceFields),
+    destinationFields: mergeNames(prev.destinationFields, patch.destinationFields),
+    sourceFieldTypes: mergeTypes(prev.sourceFieldTypes, patch.sourceFieldTypes),
+    destinationFieldTypes: mergeTypes(prev.destinationFieldTypes, patch.destinationFieldTypes),
+  }
+
+  if (idx >= 0) entities[idx] = next
+  else entities.push(next)
+
+  return {
+    ...plan,
+    entities,
+    planVersion: Math.max(Number(plan.planVersion) || 1, 2),
+  }
 }
 
 /**

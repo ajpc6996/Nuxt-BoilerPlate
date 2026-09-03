@@ -1031,6 +1031,18 @@ async function closeEditor() {
   outputBody.value = ''
   editorBusyMode.value = null
   clearMergeFields()
+  await navigateReturnToIfPresent()
+}
+
+/**
+ * If Open flow deep-linked with returnTo (e.g. back to migration Plan), go there.
+ */
+async function navigateReturnToIfPresent() {
+  const raw = String(route.query.returnTo || '').trim()
+  if (!raw.startsWith('/') || raw.startsWith('//')) return
+  // Only allow in-app absolute paths.
+  if (!/^\/[A-Za-z0-9/?#&=._\-]*$/.test(raw)) return
+  await navigateTo(raw)
 }
 
 function clearOutput() {
@@ -1379,6 +1391,7 @@ async function load() {
     })
     catalogByTypeId.value = map
     items.value = srcRes.items || []
+    await applyMigrationDeepLink()
   }
   catch (err) {
     error.value = err?.data?.statusMessage || err?.message || 'Failed to load sources'
@@ -1386,6 +1399,33 @@ async function load() {
   }
   finally {
     pending.value = false
+  }
+}
+
+/**
+ * Honor ?showMigrations=1&migrationId=…&edit=… from migration Open flow links.
+ */
+async function applyMigrationDeepLink() {
+  const q = route.query || {}
+  const show = String(q.showMigrations || '').trim()
+  const migrationId = String(q.migrationId || q.migration || '').trim()
+  const editId = String(q.edit || '').trim()
+
+  if (show === '1' || show === 'true' || migrationId) {
+    showMigrations.value = true
+  }
+  if (migrationId) {
+    migrationFilterId.value = migrationId
+  }
+
+  if (!editId || editorOpen.value) return
+  const row = (items.value || []).find((item) => String(item.id) === editId)
+  if (row) {
+    if (row.migration_project_id) {
+      showMigrations.value = true
+      migrationFilterId.value = String(row.migration_project_id)
+    }
+    await openEdit(row)
   }
 }
 
@@ -1444,6 +1484,7 @@ async function saveSource(opts = {}) {
     await load()
     if (shouldClose) {
       editorOpen.value = false
+      await navigateReturnToIfPresent()
     }
     return true
   }
@@ -1602,6 +1643,18 @@ async function removeSource(row) {
 watch(showMigrations, (value) => {
   if (!value) migrationFilterId.value = ''
 })
+
+watch(
+  () => [
+    String(route.query.showMigrations || ''),
+    String(route.query.migrationId || route.query.migration || ''),
+    String(route.query.edit || ''),
+  ].join('|'),
+  async () => {
+    if (!items.value.length) return
+    await applyMigrationDeepLink()
+  },
+)
 
 watch(
   () => activeOrganization.value?.id,

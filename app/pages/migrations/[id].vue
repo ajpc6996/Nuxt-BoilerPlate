@@ -229,17 +229,11 @@
       <section v-show="activeTab === 'plan'" class="flex flex-col gap-4">
         <div class="panel px-4 py-4">
           <h2 class="font-display text-lg font-semibold text-[var(--ink)]">
-            AI migration plan
+            Migration Plan
           </h2>
           <p class="mt-1 text-sm text-[var(--mute)]">
-            Proposes extract → transform (dual-sink) → validate stages per entity (plan v2).
-            You will be asked for extra guidance and documentation links before generation.
-          </p>
-          <p
-            v-if="planVersion"
-            class="mt-2 text-xs font-mono text-[var(--accent-ink)]"
-          >
-            Plan version {{ planVersion }}
+            Generate with AI, or add extraction and mapping steps yourself. Both use the same
+            entity keys, table names, and materialize path.
           </p>
           <div class="mt-4 flex flex-wrap gap-2">
             <button
@@ -249,6 +243,22 @@
               @click="openProposeDialog"
             >
               {{ proposing ? 'Generating…' : 'Generate plan with AI' }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy"
+              @click="openStageEditor({ stageType: 'extract' })"
+            >
+              Add extraction
+            </button>
+            <button
+              type="button"
+              class="btn-secondary !px-4 !py-2 text-sm"
+              :disabled="pageBusy"
+              @click="openStageEditor({ stageType: 'transform' })"
+            >
+              Add mapping
             </button>
             <button
               type="button"
@@ -267,20 +277,20 @@
               {{ validating ? 'Validating…' : 'Validate plan' }}
             </button>
           </div>
-          <div
+          <details
             v-if="validationResult"
             class="mt-4 rounded-md border px-3 py-3 text-sm"
             :class="validationResult.valid
               ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)]'
               : 'border-[var(--danger)] bg-[var(--surface)] text-[var(--danger)]'"
           >
-            <p class="font-medium">
+            <summary class="cursor-pointer font-medium">
               {{ validationResult.valid ? 'Plan validation passed' : 'Plan validation failed' }}
               <span class="ml-2 font-normal text-[var(--mute)]">
                 ({{ validationResult.summary?.errorCount || 0 }} errors,
                 {{ validationResult.summary?.warningCount || 0 }} warnings)
               </span>
-            </p>
+            </summary>
             <ul
               v-if="validationIssues.length"
               class="mt-2 max-h-48 space-y-2 overflow-y-auto text-xs"
@@ -298,7 +308,13 @@
                 >{{ issue.hint }}</span>
               </li>
             </ul>
-          </div>
+            <p
+              v-else
+              class="mt-2 text-xs text-[var(--mute)]"
+            >
+              No issues listed.
+            </p>
+          </details>
           <p
             v-if="planNotes"
             class="mt-4 whitespace-pre-wrap text-sm text-[var(--mute)]"
@@ -345,20 +361,43 @@
           <table class="min-w-full text-left text-sm">
             <thead class="border-b border-[var(--border)] text-[var(--mute)]">
               <tr>
+                <th class="w-8 px-1 py-2" aria-label="Reorder" />
                 <th class="px-3 py-2">#</th>
                 <th class="px-3 py-2">Stage</th>
                 <th class="px-3 py-2">Type</th>
                 <th class="px-3 py-2">Entity</th>
                 <th class="px-3 py-2">Status</th>
                 <th class="px-3 py-2">Data flow</th>
+                <th class="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               <tr
                 v-for="(stage, idx) in stages"
                 :key="stage.id"
-                class="border-b border-[var(--border-soft)]"
+                class="border-b border-[var(--border-soft)] transition-colors"
+                :class="{
+                  'opacity-50': dragStageIndex === idx,
+                  'shadow-[inset_0_2px_0_0_var(--accent)]': dropBeforeIndex === idx && dragStageIndex >= 0,
+                }"
+                @dragover.prevent="onStageDragOver(idx, $event)"
+                @drop.prevent="onStageDrop"
               >
+                <td class="px-1 py-2 align-middle">
+                  <span
+                    class="inline-flex h-7 w-7 cursor-grab select-none items-center justify-center rounded text-[var(--mute-soft)] hover:bg-[var(--surface)] hover:text-[var(--ink)] active:cursor-grabbing"
+                    :class="pageBusy || stages.length < 2 ? 'pointer-events-none opacity-40' : ''"
+                    draggable="true"
+                    title="Drag to reorder"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Drag to reorder stage"
+                    @dragstart="onStageDragStart(idx, $event)"
+                    @dragend="onStageDragEnd"
+                  >
+                    <span aria-hidden="true">⠿</span>
+                  </span>
+                </td>
                 <td class="px-3 py-2 text-[var(--mute)]">{{ idx + 1 }}</td>
                 <td class="px-3 py-2 text-[var(--ink)]">
                   <div>{{ stage.name }}</div>
@@ -369,7 +408,7 @@
                     {{ stage.description }}
                   </div>
                 </td>
-                <td class="px-3 py-2 text-[var(--mute)]">{{ stage.stage_type }}</td>
+                <td class="px-3 py-2 text-[var(--mute)]">{{ stageTypeLabel(stage.stage_type) }}</td>
                 <td class="px-3 py-2 font-mono text-xs text-[var(--accent-ink)]">
                   {{ stage.entity_key || '—' }}
                 </td>
@@ -377,20 +416,94 @@
                 <td class="px-3 py-2">
                   <NuxtLink
                     v-if="stage.data_source_id"
-                    :to="`/data-sources/sources?edit=${stage.data_source_id}`"
+                    :to="openFlowLink(stage.data_source_id, { returnTab: 'plan' })"
                     class="text-[var(--accent-ink)] hover:underline"
                   >
                     Open flow
                   </NuxtLink>
                   <span v-else class="text-[var(--mute-soft)]">—</span>
                 </td>
+                <td class="px-3 py-2">
+                  <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      v-if="stage.stage_type === 'extract' || stage.stage_type === 'transform'"
+                      type="button"
+                      class="text-[var(--accent-ink)] hover:underline"
+                      :disabled="pageBusy"
+                      @click="openStageEditor({ stage })"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="group relative inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)] disabled:opacity-50"
+                      :disabled="pageBusy"
+                      aria-label="Insert extract before this step"
+                      @click="openStageEditor({ stageType: 'extract', insertAt: stage.sort_order ?? idx })"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" d="M8 2.5v5M5.5 5H10.5" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 9.5h9v3.5H3.5z" />
+                        <path stroke-linecap="round" d="M6 11h4" />
+                      </svg>
+                      <span
+                        class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-raised)] px-2 py-1 text-[10px] font-medium text-[var(--ink)] opacity-0 shadow-md transition-opacity duration-75 group-hover:opacity-100 group-focus-visible:opacity-100"
+                      >
+                        Insert extract before this step
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="group relative inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--mute)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)] disabled:opacity-50"
+                      :disabled="pageBusy"
+                      aria-label="Insert mapping before this step"
+                      @click="openStageEditor({ stageType: 'transform', insertAt: stage.sort_order ?? idx })"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" d="M8 2v4M6 4h4" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 10.5h4l-1.2-1.2M7.5 10.5l-1.2 1.2" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12.5 10.5h-4l1.2-1.2M8.5 10.5l1.2 1.2" />
+                      </svg>
+                      <span
+                        class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-raised)] px-2 py-1 text-[10px] font-medium text-[var(--ink)] opacity-0 shadow-md transition-opacity duration-75 group-hover:opacity-100 group-focus-visible:opacity-100"
+                      >
+                        Insert mapping before this step
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="text-[var(--danger)] hover:underline"
+                      :disabled="pageBusy"
+                      @click="deleteStage(stage)"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr
+                v-if="stages.length && dragStageIndex >= 0"
+                class="h-0"
+                aria-hidden="true"
+                @dragover.prevent="dropBeforeIndex = stages.length"
+                @drop.prevent="onStageDrop"
+              >
+                <td
+                  colspan="8"
+                  class="p-0"
+                >
+                  <div
+                    class="h-0.5 transition-opacity"
+                    :class="dropBeforeIndex === stages.length ? 'bg-[var(--accent)] opacity-100' : 'opacity-0'"
+                  />
+                </td>
               </tr>
               <tr v-if="!stages.length">
                 <td
-                  colspan="6"
+                  colspan="8"
                   class="px-3 py-6 text-center text-[var(--mute)]"
                 >
-                  No stages yet. Generate a plan or add stages manually.
+                  No stages yet. Generate a plan with AI, or add an extraction / mapping step.
                 </td>
               </tr>
             </tbody>
@@ -415,11 +528,14 @@
             <div class="mt-4">
               <MigrationFieldMapping
                 :model-value="stage.config?.fieldMappings || []"
-                :source-fields="entitySourceFields(stage.entity_key)"
-                :destination-fields="entityDestFields(stage.entity_key)"
+                :source-fields="entitySourceFields(stage)"
+                :destination-fields="entityDestFields(stage)"
+                :source-field-types="entitySourceFieldTypes(stage)"
+                :destination-field-types="entityDestFieldTypes(stage)"
                 :destination-system-id="destinationSystemId"
                 :entity-key="stage.entity_key"
                 @update:model-value="(val) => updateStageMappings(stage, val)"
+                @known-fields="(payload) => rememberKnownFields(stage, payload)"
               />
               <button
                 type="button"
@@ -595,7 +711,7 @@
                         <div class="mt-2 flex flex-wrap gap-2">
                           <NuxtLink
                             v-if="sr.dataSourceId"
-                            :to="`/data-sources/sources?edit=${sr.dataSourceId}`"
+                            :to="openFlowLink(sr.dataSourceId, { returnTab: 'run' })"
                             class="text-[var(--accent-ink)] hover:underline"
                           >
                             Open data flow
@@ -703,10 +819,35 @@
         </div>
       </form>
     </div>
+
+    <MigrationStageEditor
+      v-if="stageEditorOpen && stageDraft"
+      :draft="stageDraft"
+      :saving="savingStageEditor"
+      :source-fields="entitySourceFields(stageDraftAsStage)"
+      :destination-fields="entityDestFields(stageDraftAsStage)"
+      :source-field-types="entitySourceFieldTypes(stageDraftAsStage)"
+      :destination-field-types="entityDestFieldTypes(stageDraftAsStage)"
+      :destination-system-id="destinationSystemId"
+      :has-extract-pair="stageEditorHasExtractPair"
+      @close="closeStageEditor"
+      @save="saveStageEditor"
+      @known-fields="onStageDraftKnownFields"
+    />
   </div>
 </template>
 
 <script setup>
+import {
+  collectDestinationFieldOptions,
+  collectSourceFieldOptions,
+} from '~~/shared/migrationFieldOptions.js'
+import {
+  cleanEntityKey,
+  migrationFlowName,
+  normalizePlanConfig,
+  upsertPlanEntity,
+} from '~~/shared/migration.js'
 import { getMigrationSystem, databaseLabel } from '~~/shared/migrationSystems.js'
 
 definePageMeta({
@@ -721,6 +862,24 @@ const authedFetch = useAuthedFetch()
 
 const projectId = computed(() => String(route.params.id || ''))
 
+/**
+ * Deep-link into Data Flows with migration visibility + filter pre-set.
+ * @param {string} dataSourceId
+ * @param {{ returnTab?: string }} [opts]
+ */
+function openFlowLink(dataSourceId, opts = {}) {
+  const id = String(dataSourceId || '').trim()
+  const migrationId = projectId.value
+  const returnTab = String(opts.returnTab || 'plan').trim() || 'plan'
+  const params = new URLSearchParams({
+    showMigrations: '1',
+    migrationId,
+    returnTo: `/migrations/${migrationId}?tab=${returnTab}`,
+  })
+  if (id) params.set('edit', id)
+  return `/data-sources/sources?${params.toString()}`
+}
+
 const tabs = [
   { id: 'setup', label: 'Setup' },
   { id: 'plan', label: 'Plan' },
@@ -729,6 +888,9 @@ const tabs = [
 ]
 
 const activeTab = ref('setup')
+const dragStageIndex = ref(-1)
+const dropBeforeIndex = ref(-1)
+const reorderingStages = ref(false)
 const pending = ref(true)
 const error = ref('')
 const notice = ref('')
@@ -756,6 +918,10 @@ const runProgress = ref({
   currentIndex: -1,
 })
 const savingStageId = ref('')
+const savingStageEditor = ref(false)
+const stageEditorOpen = ref(false)
+const stageDraft = ref(null)
+const stageInsertAt = ref(null)
 const expandedRunId = ref(null)
 const proposeDialogOpen = ref(false)
 const proposeForm = reactive({
@@ -771,11 +937,14 @@ const pageBusy = computed(() =>
     || introspecting.value
     || materializing.value
     || running.value
-    || savingStageId.value,
+    || savingStageId.value
+    || savingStageEditor.value
+    || reorderingStages.value,
   ),
 )
 
 const busyMessage = computed(() => {
+  if (reorderingStages.value) return 'Saving stage order…'
   if (validating.value) return 'Validating migration plan…'
   if (introspecting.value) return 'Introspecting source and destination schemas…'
   if (proposing.value) return 'Generating AI migration plan… This can take a while.'
@@ -793,6 +962,7 @@ const busyMessage = computed(() => {
   if (runningMode.value === 'full') return 'Full migration run in progress…'
   if (running.value) return 'Migration run in progress…'
   if (saving.value) return 'Saving project…'
+  if (savingStageEditor.value) return 'Saving plan step…'
   if (savingStageId.value) return 'Saving field mappings…'
   return ''
 })
@@ -870,11 +1040,6 @@ const constraintChecklist = computed(() => {
   return Array.isArray(cfg?.constraintChecklist) ? cfg.constraintChecklist : []
 })
 
-const planVersion = computed(() => {
-  const cfg = project.value?.plan_config
-  return Number(cfg?.planVersion) || null
-})
-
 const validationIssues = computed(() => {
   const list = validationResult.value?.issues
   return Array.isArray(list) ? list : []
@@ -898,24 +1063,238 @@ const transformStages = computed(() =>
   stages.value.filter((s) => s.stage_type === 'transform'),
 )
 
+const stageDraftAsStage = computed(() => {
+  const d = stageDraft.value
+  if (!d) return { entity_key: '', config: {} }
+  return {
+    entity_key: d.entityKey,
+    config: {
+      sourceEntity: d.sourceEntity,
+      destinationEntity: d.destinationEntity,
+      fieldMappings: d.fieldMappings,
+    },
+  }
+})
+
+const stageEditorHasExtractPair = computed(() => {
+  const d = stageDraft.value
+  if (!d || d.stageType === 'extract') return true
+  const key = cleanEntityKey(d.entityKey)
+  if (!key) return false
+  return (stages.value || []).some((s) => (
+    s.stage_type === 'extract' && cleanEntityKey(s.entity_key) === key
+  ))
+})
+
+/**
+ * @param {string} type
+ */
+function stageTypeLabel(type) {
+  if (type === 'extract') return 'extraction'
+  if (type === 'transform') return 'mapping'
+  return type || '—'
+}
+
+/**
+ * @param {{
+ *   stage?: Record<string, unknown>,
+ *   stageType?: string,
+ *   insertAt?: number | null,
+ * }} opts
+ */
+function openStageEditor(opts = {}) {
+  const existing = opts.stage
+  const stageType = existing?.stage_type || opts.stageType || 'extract'
+  stageInsertAt.value = opts.insertAt == null || opts.insertAt === ''
+    ? null
+    : Number(opts.insertAt)
+  if (existing) {
+    const cfg = existing.config && typeof existing.config === 'object' ? existing.config : {}
+    stageDraft.value = {
+      id: existing.id,
+      stageType,
+      name: existing.name || '',
+      description: existing.description || '',
+      entityKey: existing.entity_key || '',
+      sourceEntity: cfg.sourceEntity || '',
+      destinationEntity: cfg.destinationEntity || '',
+      fieldMappings: Array.isArray(cfg.fieldMappings)
+        ? cfg.fieldMappings.map((row) => ({ ...row }))
+        : [],
+    }
+  }
+  else {
+    const entityKey = ''
+    const draft = {
+      id: '',
+      stageType,
+      name: migrationFlowName({ stageType, entityKey: 'entity' }),
+      description: '',
+      entityKey,
+      sourceEntity: '',
+      destinationEntity: '',
+      fieldMappings: [],
+    }
+    if (stageType === 'transform') {
+      const firstExtract = (stages.value || []).find((s) => s.stage_type === 'extract')
+      if (firstExtract) {
+        draft.entityKey = firstExtract.entity_key || ''
+        draft.sourceEntity = firstExtract.config?.sourceEntity || ''
+        draft.name = migrationFlowName({
+          stageType: 'transform',
+          entityKey: draft.entityKey || 'entity',
+        })
+      }
+    }
+    stageDraft.value = draft
+  }
+  stageEditorOpen.value = true
+  activeTab.value = 'plan'
+}
+
+function closeStageEditor() {
+  stageEditorOpen.value = false
+  stageDraft.value = null
+  stageInsertAt.value = null
+  activeTab.value = 'plan'
+}
+
+const planConfigForFields = computed(() => {
+  const raw = project.value?.plan_config && typeof project.value.plan_config === 'object'
+    ? project.value.plan_config
+    : {}
+  return normalizePlanConfig({
+    ...raw,
+    sourceSystemId: raw.sourceSystemId || raw.source_system_id || form.sourceSystemId,
+    destinationSystemId:
+      raw.destinationSystemId || raw.destination_system_id || form.destinationSystemId,
+  })
+})
+
 const entitiesCatalog = computed(() => {
-  const cfg = project.value?.plan_config
+  const cfg = planConfigForFields.value
   return Array.isArray(cfg?.entities) ? cfg.entities : []
 })
 
 const destinationSystemId = computed(() => {
-  const cfg = project.value?.plan_config
+  const cfg = planConfigForFields.value
   return String(cfg?.destinationSystemId || form.destinationSystemId || '').trim()
 })
 
-const entitySourceFields = (entityKey) => {
-  const ent = entitiesCatalog.value.find((e) => e.key === entityKey)
-  return ent?.sourceFields || []
+const catalogEntity = (entityKey) => {
+  const key = cleanEntityKey(entityKey)
+  const list = entitiesCatalog.value
+  return list.find((e) => e.key === entityKey)
+    || list.find((e) => cleanEntityKey(e.key) === key)
+    || null
 }
 
-const entityDestFields = (entityKey) => {
-  const ent = entitiesCatalog.value.find((e) => e.key === entityKey)
-  return ent?.destinationFields || []
+const mappingExtraFields = (stage) => {
+  const mappings = Array.isArray(stage?.config?.fieldMappings) ? stage.config.fieldMappings : []
+  const sources = []
+  const destinations = []
+  for (const row of mappings) {
+    if (Array.isArray(row?.sources)) sources.push(...row.sources)
+    if (row?.destination) destinations.push(row.destination)
+  }
+  return { sources, destinations }
+}
+
+/**
+ * Keep discovered and typed field names on the plan entity (additive only).
+ * @param {Record<string, unknown>} stage
+ * @param {{
+ *   sourceFields?: unknown[],
+ *   destinationFields?: unknown[],
+ *   sourceFieldTypes?: Record<string, string>,
+ *   destinationFieldTypes?: Record<string, string>,
+ * }} payload
+ */
+function rememberKnownFields(stage, payload) {
+  const entityKey = stage?.entity_key || stage?.entityKey
+  if (!entityKey) return
+  const cfg = stage?.config && typeof stage.config === 'object' ? stage.config : {}
+  const extra = mappingExtraFields(stage)
+  const prevPlan = project.value?.plan_config
+  const nextPlan = upsertPlanEntity(prevPlan, {
+    key: entityKey,
+    label: entityKey,
+    sourceEntity: cfg.sourceEntity,
+    destinationEntity: cfg.destinationEntity,
+    sourceFields: [...(payload?.sourceFields || []), ...extra.sources],
+    destinationFields: [...(payload?.destinationFields || []), ...extra.destinations],
+    sourceFieldTypes: payload?.sourceFieldTypes || {},
+    destinationFieldTypes: payload?.destinationFieldTypes || {},
+  })
+  const prevEnt = Array.isArray(prevPlan?.entities) ? prevPlan.entities : []
+  const nextEnt = Array.isArray(nextPlan.entities) ? nextPlan.entities : []
+  if (JSON.stringify(prevEnt) === JSON.stringify(nextEnt)) return
+  if (project.value) {
+    project.value = { ...project.value, plan_config: nextPlan }
+  }
+}
+
+function onStageDraftKnownFields(payload) {
+  const d = stageDraft.value
+  if (!d) return
+  rememberKnownFields({
+    entity_key: d.entityKey,
+    config: {
+      sourceEntity: d.sourceEntity,
+      destinationEntity: d.destinationEntity,
+      fieldMappings: d.fieldMappings,
+    },
+  }, payload)
+}
+
+const entitySourceFields = (stage) => {
+  const entityKey = stage?.entity_key || stage?.entityKey
+  const cfg = stage?.config && typeof stage.config === 'object' ? stage.config : {}
+  const ent = catalogEntity(entityKey)
+  const extra = mappingExtraFields(stage)
+  return collectSourceFieldOptions({
+    planConfig: planConfigForFields.value,
+    entityKey,
+    tableHint: cfg.sourceEntity || ent?.sourceEntity || '',
+    catalogFields: ent?.sourceFields || [],
+    extraFields: extra.sources,
+  })
+}
+
+const entityDestFields = (stage) => {
+  const entityKey = stage?.entity_key || stage?.entityKey
+  const cfg = stage?.config && typeof stage.config === 'object' ? stage.config : {}
+  const ent = catalogEntity(entityKey)
+  const extra = mappingExtraFields(stage)
+  return collectDestinationFieldOptions({
+    planConfig: planConfigForFields.value,
+    entityKey,
+    tableHint: cfg.destinationEntity || cfg.destinationTable || ent?.destinationEntity || '',
+    catalogFields: ent?.destinationFields || [],
+    extraFields: extra.destinations,
+  })
+}
+
+/**
+ * @param {Record<string, unknown>} stage
+ * @returns {Record<string, string>}
+ */
+const entitySourceFieldTypes = (stage) => {
+  const ent = catalogEntity(stage?.entity_key || stage?.entityKey)
+  return ent?.sourceFieldTypes && typeof ent.sourceFieldTypes === 'object'
+    ? ent.sourceFieldTypes
+    : {}
+}
+
+/**
+ * @param {Record<string, unknown>} stage
+ * @returns {Record<string, string>}
+ */
+const entityDestFieldTypes = (stage) => {
+  const ent = catalogEntity(stage?.entity_key || stage?.entityKey)
+  return ent?.destinationFieldTypes && typeof ent.destinationFieldTypes === 'object'
+    ? ent.destinationFieldTypes
+    : {}
 }
 
 const formatDate = (value) => {
@@ -1021,6 +1400,93 @@ watch([() => activeOrganization.value?.id, projectId], () => {
   loadConnections()
   load()
 }, { immediate: true })
+
+function applyTabFromRoute() {
+  const tab = String(route.query.tab || '').trim()
+  if (tabs.some((t) => t.id === tab)) {
+    activeTab.value = tab
+  }
+}
+
+watch(() => route.query.tab, applyTabFromRoute, { immediate: true })
+
+/**
+ * @param {number} idx
+ * @param {DragEvent} event
+ */
+function onStageDragStart(idx, event) {
+  if (pageBusy.value || (stages.value || []).length < 2) {
+    event.preventDefault()
+    return
+  }
+  dragStageIndex.value = idx
+  dropBeforeIndex.value = idx
+  event.dataTransfer?.setData('text/plain', String(stages.value[idx]?.id || idx))
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+/**
+ * @param {number} idx
+ * @param {DragEvent} event
+ */
+function onStageDragOver(idx, event) {
+  if (dragStageIndex.value < 0) return
+  const row = event.currentTarget
+  if (!(row instanceof HTMLElement) || idx >= (stages.value || []).length) {
+    dropBeforeIndex.value = idx
+    return
+  }
+  const rect = row.getBoundingClientRect()
+  const before = event.clientY < rect.top + rect.height / 2
+  dropBeforeIndex.value = before ? idx : idx + 1
+}
+
+function onStageDragEnd() {
+  dragStageIndex.value = -1
+  dropBeforeIndex.value = -1
+}
+
+async function onStageDrop() {
+  const from = dragStageIndex.value
+  let insertAt = dropBeforeIndex.value
+  dragStageIndex.value = -1
+  dropBeforeIndex.value = -1
+  if (from < 0 || insertAt < 0 || pageBusy.value) return
+  if (insertAt > from) insertAt -= 1
+  if (insertAt === from) return
+
+  const previous = [...(stages.value || [])]
+  const next = [...previous]
+  const [item] = next.splice(from, 1)
+  if (!item) return
+  next.splice(insertAt, 0, item)
+  stages.value = next.map((stage, i) => ({ ...stage, sort_order: i }))
+
+  reorderingStages.value = true
+  error.value = ''
+  try {
+    if (!activeOrganization.value?.id) {
+      throw new Error('Organization required')
+    }
+    const res = await authedFetch(`/api/migrations/${projectId.value}/stages/reorder`, {
+      method: 'POST',
+      body: {
+        organizationId: activeOrganization.value.id,
+        stageIds: next.map((stage) => stage.id),
+      },
+    })
+    if (Array.isArray(res.stages)) {
+      stages.value = res.stages
+    }
+  }
+  catch (err) {
+    stages.value = previous
+    error.value = err?.data?.statusMessage || err?.message || 'Failed to reorder stages'
+  }
+  finally {
+    reorderingStages.value = false
+  }
+}
 
 useHead(() => ({ title: project.value?.name ? `${project.value.name} · Migration` : 'Migration' }))
 
@@ -1162,7 +1628,18 @@ const introspectSchemas = async () => {
       body: { organizationId: activeOrganization.value.id },
     })
     project.value = res.item
-    notice.value = 'Schemas introspected from connections. Run Validate plan next.'
+    const sourceEntities = res.schemas?.source?.entities && typeof res.schemas.source.entities === 'object'
+      ? res.schemas.source.entities
+      : {}
+    const filled = Object.entries(sourceEntities)
+      .map(([key, ent]) => {
+        const n = ent?.columns && typeof ent.columns === 'object' ? Object.keys(ent.columns).length : 0
+        return n ? `${key} (${n})` : null
+      })
+      .filter(Boolean)
+    notice.value = filled.length
+      ? `Schemas introspected. Source columns: ${filled.join(', ')}. Open Mapping to pick fields.`
+      : 'Schemas introspected, but no source columns were found. Check stage sourceEntity table names, then retry.'
     activeTab.value = 'plan'
   }
   catch (err) {
@@ -1206,12 +1683,37 @@ const updateStageMappings = (stage, mappings) => {
   stage.config = { ...(stage.config || {}), fieldMappings: mappings }
 }
 
+const persistPlanEntities = async () => {
+  if (!activeOrganization.value?.id) return
+  const res = await authedFetch(`/api/migrations/${projectId.value}`, {
+    method: 'PUT',
+    body: {
+      organizationId: activeOrganization.value.id,
+      sourceConnectionId: form.sourceConnectionId || null,
+      destinationConnectionId: form.destinationConnectionId || null,
+      defaultRunMode: form.defaultRunMode,
+      sampleLimit: form.sampleLimit,
+      resetIngestBeforeRun: form.resetIngestBeforeRun,
+      planConfig: buildPlanConfigPatch(),
+    },
+  })
+  project.value = res.item
+}
+
 const saveStage = async (stage) => {
   if (!activeOrganization.value?.id || pageBusy.value) return
   await beginBusy(() => {
     savingStageId.value = stage.id
   })
   try {
+    const extra = mappingExtraFields(stage)
+    const ent = catalogEntity(stage.entity_key)
+    rememberKnownFields(stage, {
+      sourceFields: ent?.sourceFields || [],
+      destinationFields: ent?.destinationFields || extra.destinations,
+      sourceFieldTypes: ent?.sourceFieldTypes || {},
+      destinationFieldTypes: ent?.destinationFieldTypes || {},
+    })
     const res = await authedFetch(`/api/migrations/${projectId.value}/stages/${stage.id}`, {
       method: 'PUT',
       body: {
@@ -1221,6 +1723,7 @@ const saveStage = async (stage) => {
     })
     const idx = stages.value.findIndex((s) => s.id === stage.id)
     if (idx >= 0) stages.value[idx] = res.item
+    await persistPlanEntities()
     notice.value = `Mappings saved for ${stage.name}.`
   }
   catch (err) {
@@ -1228,6 +1731,153 @@ const saveStage = async (stage) => {
   }
   finally {
     savingStageId.value = ''
+  }
+}
+
+const saveStageEditor = async () => {
+  if (!activeOrganization.value?.id || !stageDraft.value) return
+  const d = stageDraft.value
+  const entityKey = cleanEntityKey(d.entityKey)
+  if (!entityKey) {
+    error.value = 'Entity key is required.'
+    return
+  }
+  if (d.stageType === 'extract' && !String(d.sourceEntity || '').trim()) {
+    error.value = 'Source table is required for extraction.'
+    return
+  }
+  if (d.stageType === 'transform' && !String(d.destinationEntity || '').trim()) {
+    error.value = 'Destination table is required for mapping.'
+    return
+  }
+
+  await beginBusy(() => {
+    savingStageEditor.value = true
+  })
+  error.value = ''
+  try {
+    const existing = d.id ? (stages.value || []).find((s) => s.id === d.id) : null
+    const prevCfg = existing?.config && typeof existing.config === 'object' ? existing.config : {}
+    const name = String(d.name || '').trim()
+      || migrationFlowName({ stageType: d.stageType, entityKey })
+    const config = {
+      ...prevCfg,
+      entityLabel: entityKey,
+      sourceEntity: String(d.sourceEntity || '').trim() || String(prevCfg.sourceEntity || '').trim(),
+      destinationEntity: String(d.destinationEntity || '').trim()
+        || String(prevCfg.destinationEntity || '').trim(),
+      fieldMappings: d.stageType === 'transform'
+        ? (Array.isArray(d.fieldMappings) ? d.fieldMappings : [])
+        : (Array.isArray(prevCfg.fieldMappings) ? prevCfg.fieldMappings : []),
+    }
+    if (d.stageType === 'transform' && !config.export) {
+      config.export = { mode: 'insert', onConflict: 'skip', conflictTarget: 'primary_key' }
+    }
+
+    if (d.id) {
+      await authedFetch(`/api/migrations/${projectId.value}/stages/${d.id}`, {
+        method: 'PUT',
+        body: {
+          organizationId: activeOrganization.value.id,
+          name,
+          description: d.description || '',
+          stageType: d.stageType,
+          entityKey,
+          config,
+        },
+      })
+    }
+    else {
+      const body = {
+        organizationId: activeOrganization.value.id,
+        name,
+        description: d.description || '',
+        stageType: d.stageType,
+        entityKey,
+        status: 'draft',
+        config,
+      }
+      if (stageInsertAt.value != null && Number.isFinite(Number(stageInsertAt.value))) {
+        body.insertAt = Number(stageInsertAt.value)
+      }
+      await authedFetch(`/api/migrations/${projectId.value}/stages`, {
+        method: 'POST',
+        body,
+      })
+    }
+
+    const mappingSources = [
+      ...(Array.isArray(d.knownSourceFields) ? d.knownSourceFields : []),
+      ...(config.fieldMappings || []).flatMap((row) => row.sources || []),
+    ]
+    const mappingDests = [
+      ...(Array.isArray(d.knownDestinationFields) ? d.knownDestinationFields : []),
+      ...(config.fieldMappings || []).map((row) => row.destination).filter(Boolean),
+    ]
+    const nextPlan = upsertPlanEntity(buildPlanConfigPatch(), {
+      key: entityKey,
+      label: entityKey,
+      sourceEntity: config.sourceEntity,
+      destinationEntity: config.destinationEntity,
+      sourceFields: mappingSources,
+      destinationFields: mappingDests,
+      sourceFieldTypes: d.knownSourceFieldTypes || {},
+      destinationFieldTypes: d.knownDestinationFieldTypes || {},
+    })
+    const projRes = await authedFetch(`/api/migrations/${projectId.value}`, {
+      method: 'PUT',
+      body: {
+        organizationId: activeOrganization.value.id,
+        sourceConnectionId: form.sourceConnectionId || null,
+        destinationConnectionId: form.destinationConnectionId || null,
+        defaultRunMode: form.defaultRunMode,
+        sampleLimit: form.sampleLimit,
+        resetIngestBeforeRun: form.resetIngestBeforeRun,
+        planConfig: nextPlan,
+      },
+    })
+    project.value = projRes.item
+    await load()
+    notice.value = d.id
+      ? `Updated “${name}”. Rematerialize if Data Flows already exist.`
+      : `Added “${name}”. Materialize flows to create its Data Flow.`
+    closeStageEditor()
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Failed to save plan step'
+  }
+  finally {
+    savingStageEditor.value = false
+  }
+}
+
+const deleteStage = async (stage) => {
+  if (!activeOrganization.value?.id || pageBusy.value || !stage?.id) return
+  const ok = await confirm({
+    title: 'Remove plan step?',
+    message: `Remove “${stage.name}”? This does not delete already materialized Data Flows; rematerialize or remove those separately if needed.`,
+    confirmLabel: 'Remove',
+    danger: true,
+  })
+  if (!ok) return
+  await beginBusy(() => {
+    savingStageEditor.value = true
+  })
+  error.value = ''
+  try {
+    await authedFetch(`/api/migrations/${projectId.value}/stages/${stage.id}`, {
+      method: 'DELETE',
+      query: { organizationId: activeOrganization.value.id },
+    })
+    await load()
+    notice.value = `Removed “${stage.name}”.`
+    activeTab.value = 'plan'
+  }
+  catch (err) {
+    error.value = err?.data?.statusMessage || err?.message || 'Failed to remove step'
+  }
+  finally {
+    savingStageEditor.value = false
   }
 }
 

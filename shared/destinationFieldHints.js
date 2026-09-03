@@ -170,6 +170,20 @@ function uniqueMapOptions(map, prefix) {
 }
 
 /**
+ * Known destination field names from docs/hints (for mapping dropdowns).
+ * @param {string} systemId
+ * @param {string} entityKey
+ * @returns {string[]}
+ */
+export function listKnownDestinationFields(systemId, entityKey) {
+  const system = String(systemId || '').trim().toLowerCase()
+  const entity = String(entityKey || '').trim().toLowerCase()
+  const scoped = FIELD_HINTS[system]?.[entity]
+  if (!scoped || typeof scoped !== 'object') return []
+  return Object.keys(scoped).sort((a, b) => a.localeCompare(b))
+}
+
+/**
  * @param {string} systemId
  * @param {string} entityKey
  * @param {string} fieldName

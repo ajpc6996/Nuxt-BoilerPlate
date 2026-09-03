@@ -1,5 +1,5 @@
 import { decryptSecrets } from '~~/server/utils/connectorCrypto.js'
-import { cleanEntityKey } from '~~/shared/migration.js'
+import { cleanEntityKey, resolveRunnerTableConfig } from '~~/shared/migration.js'
 
 /**
  * Introspect source/destination table columns for migration plan schemas.
@@ -82,10 +82,11 @@ async function introspectConnectionSide(admin, opts) {
       : String(ent?.destinationEntity || ent?.key || '').trim()
     if (!tableRef || /^select\s/i.test(tableRef)) continue
 
-    const table = tableRef.split('.').pop() || tableRef
+    const resolved = resolveRunnerTableConfig(tableRef, entityKey)
+    const table = String(resolved.table || tableRef.split('.').pop() || tableRef).trim()
     try {
       const columns = await listTableColumns(runnerKey, config, secrets, table)
-      entitySchemas[entityKey] = { table: tableRef, columns }
+      entitySchemas[entityKey] = { table: resolved.table || tableRef, columns }
     }
     catch (err) {
       entitySchemas[entityKey] = {
@@ -136,7 +137,7 @@ async function listTableColumns(runnerKey, config, secrets, table) {
       const result = await client.query(
         `SELECT column_name, data_type, is_nullable
          FROM information_schema.columns
-         WHERE table_schema = $1 AND table_name = $2
+         WHERE table_schema = $1 AND LOWER(table_name) = LOWER($2)
          ORDER BY ordinal_position`,
         [schema, safeTable],
       )
@@ -168,7 +169,7 @@ async function listTableColumns(runnerKey, config, secrets, table) {
       const [rows] = await connection.query(
         `SELECT COLUMN_NAME AS column_name, DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable
          FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+         WHERE TABLE_SCHEMA = ? AND LOWER(TABLE_NAME) = LOWER(?)
          ORDER BY ORDINAL_POSITION`,
         [db, safeTable],
       )
